@@ -20,6 +20,27 @@ write_files:
         reverse_proxy localhost:3000
       }
 
+  # Bender config — model and runtime settings
+  - path: /home/ubuntu/.bender/config.json
+    owner: ubuntu:ubuntu
+    content: |
+      {
+        "claude": {
+          "model": "claude-sonnet-4-20250514",
+          "max_turns": 50
+        },
+        "workers": {
+          "max_concurrent": 3
+        },
+        "circuit_breaker": {
+          "max_duration_minutes": 30,
+          "max_tokens": 100000
+        },
+        "retry": {
+          "max_retries": 3
+        }
+      }
+
   # Systemd service for the Bender webhook server
   - path: /etc/systemd/system/bender.service
     content: |
