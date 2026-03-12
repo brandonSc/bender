@@ -1,0 +1,80 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+  - jq
+  - curl
+  - unzip
+  - docker.io
+  - htop
+  - caddy
+
+write_files:
+  # Caddy reverse proxy — TLS via Let's Encrypt, forwards to the webhook server
+  - path: /etc/caddy/Caddyfile
+    content: |
+      ${domain} {
+        reverse_proxy localhost:3000
+      }
+
+  # Systemd service for the Bender webhook server
+  - path: /etc/systemd/system/bender.service
+    content: |
+      [Unit]
+      Description=Bender webhook server
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=ubuntu
+      WorkingDirectory=/home/ubuntu/bender/server
+      EnvironmentFile=/home/ubuntu/.bender/secrets.env
+      ExecStart=/usr/bin/node dist/index.js
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # --- Docker ---
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+
+  # --- Node.js 20 ---
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - apt-get install -y nodejs
+
+  # --- GitHub CLI ---
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  - apt-get update && apt-get install -y gh
+
+  # --- Earthly ---
+  - wget -q https://github.com/earthly/earthly/releases/latest/download/earthly-linux-amd64 -O /usr/local/bin/earthly
+  - chmod +x /usr/local/bin/earthly
+  - sudo -u ubuntu /usr/local/bin/earthly bootstrap
+
+  # --- Claude Code CLI ---
+  - npm install -g @anthropic-ai/claude-code
+
+  # --- Create directory structure ---
+  - |
+    sudo -u ubuntu mkdir -p /home/ubuntu/.bender/sessions
+    sudo -u ubuntu mkdir -p /home/ubuntu/.bender/index/by-ticket
+    sudo -u ubuntu mkdir -p /home/ubuntu/.bender/index/by-pr
+    sudo -u ubuntu mkdir -p /home/ubuntu/.bender/logs
+    sudo -u ubuntu mkdir -p /home/ubuntu/.bender/archive
+    sudo -u ubuntu mkdir -p /home/ubuntu/repos
+
+  # --- Start Caddy ---
+  - systemctl enable caddy
+  - systemctl restart caddy
+
+  # --- Signal completion ---
+  - echo "Cloud-init complete. Set up secrets.env and deploy the server." > /home/ubuntu/READY
+  - chown -R ubuntu:ubuntu /home/ubuntu

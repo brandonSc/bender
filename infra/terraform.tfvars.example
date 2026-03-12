@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and fill in your values
+region          = "us-west-2"
+instance_type   = "t3.large"
+disk_size       = 80
+key_name        = "your-key-pair-name"
+domain          = "bender.demo.earthly.dev"
+route53_zone_id = "your-zone-id"
+
+# Restrict SSH to your IP (recommended)
+# ssh_allow_cidrs = ["1.2.3.4/32"]
