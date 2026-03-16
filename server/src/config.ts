@@ -64,9 +64,9 @@ export function loadSecrets(): Secrets {
     GITHUB_APP_ID: process.env.GITHUB_APP_ID!,
     GITHUB_APP_PRIVATE_KEY_PATH: process.env.GITHUB_APP_PRIVATE_KEY_PATH!,
     GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET!,
-    LINEAR_API_TOKEN: process.env.LINEAR_API_TOKEN ?? "",
+    LINEAR_CLIENT_ID: process.env.LINEAR_CLIENT_ID ?? "",
+    LINEAR_CLIENT_SECRET: process.env.LINEAR_CLIENT_SECRET ?? "",
     LINEAR_WEBHOOK_SECRET: process.env.LINEAR_WEBHOOK_SECRET ?? "",
-    LINEAR_BOT_USER_ID: process.env.LINEAR_BOT_USER_ID ?? "",
     LUNAR_HUB_TOKEN: process.env.LUNAR_HUB_TOKEN ?? "",
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
   };

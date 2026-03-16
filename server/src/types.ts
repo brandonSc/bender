@@ -120,9 +120,9 @@ export interface Secrets {
   GITHUB_APP_ID: string;
   GITHUB_APP_PRIVATE_KEY_PATH: string;
   GITHUB_WEBHOOK_SECRET: string;
-  LINEAR_API_TOKEN: string;
+  LINEAR_CLIENT_ID: string;
+  LINEAR_CLIENT_SECRET: string;
   LINEAR_WEBHOOK_SECRET: string;
-  LINEAR_BOT_USER_ID: string;
   LUNAR_HUB_TOKEN: string;
   ANTHROPIC_API_KEY: string;
 }
