@@ -67,6 +67,7 @@ export function loadSecrets(): Secrets {
     LINEAR_CLIENT_ID: process.env.LINEAR_CLIENT_ID ?? "",
     LINEAR_CLIENT_SECRET: process.env.LINEAR_CLIENT_SECRET ?? "",
     LINEAR_WEBHOOK_SECRET: process.env.LINEAR_WEBHOOK_SECRET ?? "",
+    LINEAR_APP_WEBHOOK_SECRET: process.env.LINEAR_APP_WEBHOOK_SECRET ?? "",
     LUNAR_HUB_TOKEN: process.env.LUNAR_HUB_TOKEN ?? "",
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
   };

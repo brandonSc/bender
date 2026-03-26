@@ -185,15 +185,18 @@ app.post("/webhooks/linear", (req, res) => {
 
   console.log(`[linear] Received: ${webhookType}/${webhookAction}`);
 
-  // AgentSessionEvent webhooks are signed by the OAuth app, not the workspace webhook.
-  // Only verify signature for workspace webhooks (Issue, Comment) if secret is configured.
+  // AgentSessionEvent webhooks are signed with the OAuth app's webhook secret.
+  // Workspace webhooks (Issue, Comment) use the workspace webhook secret.
   const isAgentEvent = webhookType === "AgentSessionEvent";
+  const signingSecret = isAgentEvent
+    ? secrets.LINEAR_APP_WEBHOOK_SECRET
+    : secrets.LINEAR_WEBHOOK_SECRET;
+
   if (
-    !isAgentEvent &&
-    secrets.LINEAR_WEBHOOK_SECRET &&
-    !verifyLinearSignature(rawBody, signature, secrets.LINEAR_WEBHOOK_SECRET)
+    signingSecret &&
+    !verifyLinearSignature(rawBody, signature, signingSecret)
   ) {
-    console.warn("[linear] Invalid signature — rejecting");
+    console.warn(`[linear] Invalid signature for ${webhookType} — rejecting`);
     res.status(401).json({ error: "Invalid signature" });
     return;
   }
