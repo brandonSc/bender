@@ -68,6 +68,8 @@ export function buildResumedPrompt(
 ): string {
   const parts: string[] = [];
 
+  parts.push(getIdentityPrompt());
+  parts.push("");
   parts.push(`## Event: ${event.type}`);
   parts.push(`Source: ${event.source}`);
   parts.push(`Time: ${event.timestamp}`);
@@ -94,7 +96,15 @@ export function buildResumedPrompt(
     parts.push(`- Blocked: ${session.blocked.reason}`);
   }
 
-  parts.push("", "Resume your work. The reviewer has responded.");
+  if (event.comment_body) {
+    parts.push(
+      "",
+      "Respond to the human's message above. If they asked a question, answer it. If they gave feedback, acknowledge it and act on it.",
+      "Use `bender-say` to reply in the same channel the message came from. Stay in character as Bender.",
+    );
+  } else {
+    parts.push("", "Resume your work. The reviewer has responded.");
+  }
 
   return parts.join("\n");
 }
