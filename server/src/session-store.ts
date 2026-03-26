@@ -128,21 +128,40 @@ export function findSessionForEvent(event: {
     return getSessionByTicket(event.ticket_id);
   }
 
-  // Try PR lookup
+  // Try PR index lookup
   if (event.repo && event.pr_number) {
-    return getSessionByPR(event.repo, event.pr_number);
+    const session = getSessionByPR(event.repo, event.pr_number);
+    if (session) return session;
   }
 
-  // Scan all sessions for matching PR number
+  // Scan all sessions — match by PR number or by repo when session has no PR yet
   if (event.pr_number) {
     const sessions = listActiveSessions();
-    return (
-      sessions.find(
-        (s) =>
-          s.pr_number === event.pr_number &&
-          (!event.repo || s.repo === event.repo),
-      ) ?? null
+
+    // Exact PR match
+    const exact = sessions.find(
+      (s) =>
+        s.pr_number === event.pr_number &&
+        (!event.repo || s.repo === event.repo),
     );
+    if (exact) return exact;
+
+    // If session has no pr_number yet, match by repo.
+    // This handles the case where Claude opened a PR but the session wasn't updated.
+    if (event.repo) {
+      const byRepo = sessions.find(
+        (s) => !s.pr_number && (s.repo === event.repo || !s.repo),
+      );
+      if (byRepo) {
+        byRepo.pr_number = event.pr_number;
+        if (event.repo) byRepo.repo = event.repo;
+        saveSession(byRepo);
+        console.log(
+          `[session] Backfilled PR#${event.pr_number} on ${byRepo.ticket_id}`,
+        );
+        return byRepo;
+      }
+    }
   }
 
   return null;
