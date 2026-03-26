@@ -24,6 +24,7 @@ export async function invokeClaude(
   session: Session,
   prompt: string,
   config: Config,
+  githubToken?: string,
 ): Promise<ClaudeResult> {
   const args: string[] = [];
 
@@ -75,6 +76,7 @@ export async function invokeClaude(
       env: {
         ...process.env,
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+        ...(githubToken ? { GH_TOKEN: githubToken, GITHUB_TOKEN: githubToken } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

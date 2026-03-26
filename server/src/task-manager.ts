@@ -12,6 +12,7 @@ import {
   emitResponse,
   emitError,
 } from "./linear-agent.js";
+import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 
 interface QueueItem {
   event: TaskEvent;
@@ -124,6 +125,18 @@ export class TaskManager {
   ): Promise<void> {
     const { session, event, isNewSession, needsCheckpoint } = result;
 
+    // Get a GitHub installation token for Claude to use
+    let githubToken: string | undefined;
+    try {
+      const octokit = getAppOctokit();
+      const { data: installations } = await octokit.rest.apps.listInstallations();
+      if (installations.length > 0) {
+        githubToken = await getInstallationToken(installations[0].id);
+      }
+    } catch (err) {
+      console.warn(`[W${worker.id}] Failed to get GitHub token:`, err);
+    }
+
     // Notify Linear that we're working
     if (session.agent_session_id) {
       const desc = isNewSession
@@ -143,7 +156,7 @@ export class TaskManager {
     }
 
     // Invoke Claude
-    const claudeResult = await invokeClaude(session, prompt, this.config);
+    const claudeResult = await invokeClaude(session, prompt, this.config, githubToken);
 
     console.log(
       `[W${worker.id}] ← ${session.ticket_id} exit=${claudeResult.exitCode} ` +
