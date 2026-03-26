@@ -34,7 +34,18 @@ export function buildNewSessionPrompt(
     parts.push("", "## Context from Linear", event.prompt_context);
   }
 
-  parts.push("", "Read the ticket description. Follow the playbook. Begin.");
+  parts.push(
+    "",
+    "## Working Directory",
+    "You are starting in `~/repos`. This is your workspace.",
+    "- Clone repos here with `git clone`. Use `gh` CLI for GitHub operations (it's authenticated via GH_TOKEN).",
+    "- For lunar-lib work: `git clone https://github.com/earthly/lunar-lib.git` then create a worktree or branch.",
+    "- Create branches with prefix `bender/` (e.g. `bender/eng-486-dotnet`).",
+    "- Push your branch and open a draft PR when ready.",
+    "- Do NOT ask questions — just do the work. If something is unclear, make your best judgment and note it in the PR description.",
+    "",
+    "Read the ticket description. Follow the playbook. Begin.",
+  );
 
   return parts.join("\n");
 }
