@@ -14,6 +14,35 @@ import {
 } from "./linear-agent.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 
+async function benderChat(
+  userMessage: string,
+  session: { ticket_id: string; ticket_title: string; phase: string; pr_number: number | null },
+): Promise<string | null> {
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        system: `You are Bender Bending Rodríguez from Futurama, working as a coding agent. You're arrogant, brash, sarcastic, and take credit for everything. Use Bender catchphrases often ("bite my shiny metal AST", "I'm 40% code", "shut up baby I know it", "neat!", "meatbag", etc). But give genuinely useful technical answers when asked technical questions.
+
+Current context: Working on ticket ${session.ticket_id} "${session.ticket_title}" (phase: ${session.phase}, PR: ${session.pr_number ? `#${session.pr_number}` : "none"}).`,
+        messages: [{ role: "user", content: userMessage }],
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as { content: Array<{ text: string }> };
+    return data.content[0].text;
+  } catch {
+    return null;
+  }
+}
+
 async function benderSpeak(situation: string): Promise<string> {
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -175,6 +204,22 @@ export class TaskManager {
       console.warn(`[W${worker.id}] Failed to get GitHub token:`, err);
     }
 
+    // Fast path: conversational replies via Haiku (no CLI needed)
+    if (
+      event.type === "agent_prompt" &&
+      event.comment_body &&
+      session.agent_session_id
+    ) {
+      console.log(`[W${worker.id}] Fast path: chat reply for ${session.ticket_id}`);
+      const reply = await benderChat(event.comment_body, session);
+      if (reply) {
+        await emitResponse(session.agent_session_id, reply);
+        saveSession(session);
+        return;
+      }
+      // Fall through to full CLI if benderChat fails
+    }
+
     // Notify Linear that we're working
     if (session.agent_session_id) {
       const situation = isNewSession
@@ -281,10 +326,15 @@ export class TaskManager {
 
 function extractSummary(output: string): string {
   if (!output) return "";
-  const lines = output.trim().split("\n").filter((l) => {
+  // Strip the prompt echo (everything before first blank line after "Begin." or "Bender.")
+  const promptEnd = output.lastIndexOf("Stay in character as Bender.");
+  const cleaned = promptEnd >= 0
+    ? output.slice(promptEnd + "Stay in character as Bender.".length).trim()
+    : output.trim();
+
+  const lines = cleaned.split("\n").filter((l) => {
     const t = l.trim();
-    return t.length > 0 && !t.startsWith("---") && !t.startsWith("===");
+    return t.length > 0 && !t.startsWith("---") && !t.startsWith("===") && !t.startsWith("Exit code:");
   });
-  const tail = lines.slice(-15).join("\n");
-  return tail.length > 2000 ? tail.slice(-2000) : tail;
+  return lines.join("\n").slice(0, 4000);
 }
