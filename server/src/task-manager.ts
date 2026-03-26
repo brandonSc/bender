@@ -7,6 +7,11 @@ import {
   buildResumedPrompt,
   buildCheckpointedPrompt,
 } from "./context-builder.js";
+import {
+  emitThought,
+  emitResponse,
+  emitError,
+} from "./linear-agent.js";
 
 interface QueueItem {
   event: TaskEvent;
@@ -119,6 +124,14 @@ export class TaskManager {
   ): Promise<void> {
     const { session, event, isNewSession, needsCheckpoint } = result;
 
+    // Notify Linear that we're working
+    if (session.agent_session_id) {
+      const desc = isNewSession
+        ? `Picking up ${session.ticket_id}: ${session.ticket_title}`
+        : `Resuming work on ${session.ticket_id} (${event.type})`;
+      await emitThought(session.agent_session_id, desc);
+    }
+
     // Build the prompt
     let prompt: string;
     if (isNewSession) {
@@ -144,20 +157,35 @@ export class TaskManager {
     }
 
     if (claudeResult.killed) {
-      // Circuit breaker tripped — session may need checkpoint
       session.status = "parked";
       console.warn(
         `[W${worker.id}] ${session.ticket_id} killed by circuit breaker`,
       );
+      if (session.agent_session_id) {
+        await emitError(
+          session.agent_session_id,
+          `Circuit breaker tripped after ${this.config.circuit_breaker.max_duration_minutes} minutes. I'll pick this up on the next event.`,
+        );
+      }
     } else if (claudeResult.exitCode === 0) {
-      // Normal completion — task parked itself or finished
       session.status = "parked";
+      if (session.agent_session_id) {
+        await emitResponse(
+          session.agent_session_id,
+          `Done with this step. Waiting for reviewer feedback or next event.`,
+        );
+      }
     } else {
-      // Non-zero exit — error
       session.retry_count++;
       if (session.retry_count >= session.max_retries) {
         session.phase = "error";
         session.status = "error";
+        if (session.agent_session_id) {
+          await emitError(
+            session.agent_session_id,
+            `Failed after ${session.max_retries} retries. Needs human attention.`,
+          );
+        }
       }
     }
 

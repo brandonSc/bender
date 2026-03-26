@@ -48,6 +48,7 @@ export interface Session {
   conversation_summary: string;
 
   claude_session_id: string | null;
+  agent_session_id: string | null;
   checkpoint_count: number;
   last_checkpoint_summary: string | null;
 
@@ -72,6 +73,7 @@ export type EventType =
   | "reviewer_comment"
   | "pr_review"
   | "new_ticket"
+  | "agent_prompt"
   | "informational";
 
 export interface TaskEvent {
@@ -92,6 +94,10 @@ export interface TaskEvent {
   ticket_id?: string;
   ticket_title?: string;
   ticket_url?: string;
+
+  // Linear AgentSession-specific
+  agent_session_id?: string;
+  prompt_context?: string;
 
   // Raw payload for the executor
   raw: unknown;

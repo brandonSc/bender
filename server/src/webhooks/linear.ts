@@ -17,6 +17,10 @@ export function verifyLinearSignature(
 
 /**
  * Parse a Linear webhook event into a TaskEvent (or null if we don't care).
+ *
+ * Linear sends two kinds of webhooks relevant to Bender:
+ * 1. AgentSessionEvent (type="AgentSessionEvent") — when Bender is assigned/mentioned/prompted
+ * 2. Issue/Comment (type="Issue"|"Comment") — legacy fallback for non-agent events
  */
 export function parseLinearEvent(
   payload: Record<string, unknown>,
@@ -24,25 +28,95 @@ export function parseLinearEvent(
 ): TaskEvent | null {
   const type = payload.type as string;
   const action = payload.action as string;
-  const data = payload.data as Record<string, unknown>;
-
-  if (!data) return null;
 
   switch (type) {
+    case "AgentSessionEvent":
+      return parseAgentSessionEvent(payload, action);
     case "Issue":
-      return parseIssueEvent(data, action, botUserId);
+      return parseIssueEvent(
+        payload.data as Record<string, unknown>,
+        action,
+        botUserId,
+      );
     case "Comment":
-      return parseCommentEvent(data, action, payload);
+      return parseCommentEvent(
+        payload.data as Record<string, unknown>,
+        action,
+        payload,
+      );
     default:
       return null;
   }
 }
 
+function parseAgentSessionEvent(
+  payload: Record<string, unknown>,
+  action: string,
+): TaskEvent | null {
+  const data = payload.data as Record<string, unknown> | undefined;
+  if (!data) return null;
+
+  const agentSession = data.agentSession as Record<string, unknown> | undefined
+    ?? data;
+  const agentSessionId = (agentSession.id as string) ?? (data.id as string);
+
+  const issue = (agentSession.issue ?? data.issue) as Record<string, unknown> | undefined;
+  if (!issue) return null;
+
+  const ticketId = (issue.identifier as string) ?? "";
+  const title = (issue.title as string) ?? "";
+  const url = (issue.url as string) ?? "";
+
+  const promptContext = (data.promptContext as string)
+    ?? (payload.promptContext as string)
+    ?? "";
+
+  if (action === "created") {
+    return {
+      id: `agent_session:${agentSessionId}`,
+      type: "new_ticket",
+      priority: 4,
+      timestamp: new Date().toISOString(),
+      source: "linear",
+      ticket_id: ticketId,
+      ticket_title: title,
+      ticket_url: url,
+      agent_session_id: agentSessionId,
+      prompt_context: promptContext,
+      raw: payload,
+    };
+  }
+
+  if (action === "prompted") {
+    const agentActivity = data.agentActivity as Record<string, unknown> | undefined;
+    const promptBody = (agentActivity?.body as string) ?? "";
+
+    return {
+      id: `agent_prompt:${agentSessionId}:${Date.now()}`,
+      type: "agent_prompt",
+      priority: 3,
+      timestamp: new Date().toISOString(),
+      source: "linear",
+      ticket_id: ticketId,
+      ticket_title: title,
+      ticket_url: url,
+      agent_session_id: agentSessionId,
+      comment_body: promptBody,
+      prompt_context: promptContext,
+      raw: payload,
+    };
+  }
+
+  return null;
+}
+
 function parseIssueEvent(
-  data: Record<string, unknown>,
+  data: Record<string, unknown> | undefined,
   action: string,
   botUserId: string,
 ): TaskEvent | null {
+  if (!data) return null;
+
   const assigneeId = (data.assignee as Record<string, unknown>)?.id as
     | string
     | undefined;
@@ -50,7 +124,6 @@ function parseIssueEvent(
   const title = data.title as string;
   const url = data.url as string;
 
-  // Ticket assigned to bot
   if (action === "update" && assigneeId === botUserId) {
     return {
       id: `linear_assigned:${ticketId}`,
@@ -65,9 +138,7 @@ function parseIssueEvent(
     };
   }
 
-  // Ticket unassigned from bot
   if (action === "update" && assigneeId !== botUserId) {
-    // Check if it WAS assigned to bot (via updatedFrom)
     const updatedFrom = data.updatedFrom as Record<string, unknown> | undefined;
     if (updatedFrom?.assigneeId === botUserId) {
       return {
@@ -88,11 +159,11 @@ function parseIssueEvent(
 }
 
 function parseCommentEvent(
-  data: Record<string, unknown>,
+  data: Record<string, unknown> | undefined,
   action: string,
   payload: Record<string, unknown>,
 ): TaskEvent | null {
-  if (action !== "create") return null;
+  if (!data || action !== "create") return null;
 
   const issue = data.issue as Record<string, unknown>;
   if (!issue) return null;

@@ -15,7 +15,7 @@ export function buildNewSessionPrompt(
   const playbook = loadPlaybook();
   const journal = loadJournal();
 
-  return [
+  const parts = [
     identity,
     "",
     "## Playbook",
@@ -28,9 +28,15 @@ export function buildNewSessionPrompt(
     `A new ticket has been assigned to you:`,
     `- **Ticket:** ${session.ticket_id} — ${session.ticket_title}`,
     `- **URL:** ${session.ticket_url}`,
-    "",
-    "Read the ticket description. Follow the playbook. Begin.",
-  ].join("\n");
+  ];
+
+  if (event.prompt_context) {
+    parts.push("", "## Context from Linear", event.prompt_context);
+  }
+
+  parts.push("", "Read the ticket description. Follow the playbook. Begin.");
+
+  return parts.join("\n");
 }
 
 /**

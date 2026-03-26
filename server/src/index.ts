@@ -180,8 +180,16 @@ app.post("/webhooks/linear", (req, res) => {
   const rawBody = (req as unknown as Record<string, unknown>)
     .rawBody as string;
   const signature = req.headers["linear-signature"] as string | undefined;
+  const webhookType = req.body.type as string;
+  const webhookAction = req.body.action as string;
 
+  console.log(`[linear] Received: ${webhookType}/${webhookAction}`);
+
+  // AgentSessionEvent webhooks are signed by the OAuth app, not the workspace webhook.
+  // Only verify signature for workspace webhooks (Issue, Comment) if secret is configured.
+  const isAgentEvent = webhookType === "AgentSessionEvent";
   if (
+    !isAgentEvent &&
     secrets.LINEAR_WEBHOOK_SECRET &&
     !verifyLinearSignature(rawBody, signature, secrets.LINEAR_WEBHOOK_SECRET)
   ) {
@@ -192,13 +200,15 @@ app.post("/webhooks/linear", (req, res) => {
 
   const event = parseLinearEvent(req.body, linearBotUserId);
   if (!event) {
+    console.log(`[linear] ${webhookType}/${webhookAction} → ignored`);
     res.json({ status: "ignored" });
     return;
   }
 
   console.log(
-    `[linear] ${req.body.type}/${req.body.action} → ${event.type}` +
-      (event.ticket_id ? ` ${event.ticket_id}` : ""),
+    `[linear] ${webhookType}/${webhookAction} → ${event.type}` +
+      (event.ticket_id ? ` ${event.ticket_id}` : "") +
+      (event.agent_session_id ? ` session=${event.agent_session_id}` : ""),
   );
 
   taskManager.enqueue(event);

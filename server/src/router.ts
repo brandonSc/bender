@@ -48,6 +48,28 @@ export function routeEvent(event: TaskEvent): RouteResult | null {
     };
   }
 
+  // Agent prompt — user sent a follow-up in an existing AgentSession
+  if (event.type === "agent_prompt" && event.ticket_id) {
+    const existing = findSessionForEvent(event);
+    if (!existing) return null;
+
+    if (event.agent_session_id && !existing.agent_session_id) {
+      existing.agent_session_id = event.agent_session_id;
+    }
+    existing.last_event_id = event.id;
+    existing.last_activity_at = event.timestamp;
+    existing.status = "active";
+    if (existing.blocked) existing.blocked = null;
+    saveSession(existing);
+    return {
+      action: "invoke",
+      session: existing,
+      event,
+      isNewSession: false,
+      needsCheckpoint: false,
+    };
+  }
+
   // GitHub events → find existing session
   const session = findSessionForEvent(event);
   if (!session) {
@@ -167,6 +189,7 @@ function newSession(event: TaskEvent): Session {
     conversation_summary: "",
 
     claude_session_id: null,
+    agent_session_id: event.agent_session_id ?? null,
     checkpoint_count: 0,
     last_checkpoint_summary: null,
 
