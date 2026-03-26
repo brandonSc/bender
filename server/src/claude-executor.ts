@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { getBenderDir } from "./config.js";
+import { getLinearToken } from "./linear-auth.js";
 import type { Config, Session } from "./types.js";
 
 export interface ClaudeResult {
@@ -77,6 +78,10 @@ export async function invokeClaude(
         ...process.env,
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
         ...(githubToken ? { GH_TOKEN: githubToken, GITHUB_TOKEN: githubToken } : {}),
+        ...(session.agent_session_id ? {
+          BENDER_AGENT_SESSION_ID: session.agent_session_id,
+          BENDER_LINEAR_TOKEN: getLinearToken() ?? "",
+        } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
