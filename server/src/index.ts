@@ -184,6 +184,9 @@ app.post("/webhooks/linear", (req, res) => {
   const webhookAction = req.body.action as string;
 
   console.log(`[linear] Received: ${webhookType}/${webhookAction}`);
+  if (webhookType === "AgentSessionEvent") {
+    console.log(`[linear] AgentSessionEvent payload: ${JSON.stringify(req.body, null, 2)}`);
+  }
 
   // AgentSessionEvent webhooks are signed with the OAuth app's webhook secret.
   // Workspace webhooks (Issue, Comment) use the workspace webhook secret.
