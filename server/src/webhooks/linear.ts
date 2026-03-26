@@ -29,6 +29,15 @@ export function parseLinearEvent(
   const type = payload.type as string;
   const action = payload.action as string;
 
+  // Ignore events triggered by Bender itself (prevents feedback loops)
+  const actorId = (payload.data as Record<string, unknown>)?.userId as string
+    ?? (payload.data as Record<string, unknown>)?.actorId as string
+    ?? payload.appUserId as string
+    ?? "";
+  if (type !== "AgentSessionEvent" && actorId === botUserId) {
+    return null;
+  }
+
   switch (type) {
     case "AgentSessionEvent":
       return parseAgentSessionEvent(payload, action);
@@ -43,6 +52,7 @@ export function parseLinearEvent(
         payload.data as Record<string, unknown>,
         action,
         payload,
+        botUserId,
       );
     default:
       return null;
@@ -159,6 +169,7 @@ function parseCommentEvent(
   data: Record<string, unknown> | undefined,
   action: string,
   payload: Record<string, unknown>,
+  botUserId: string,
 ): TaskEvent | null {
   if (!data || action !== "create") return null;
 
@@ -167,7 +178,12 @@ function parseCommentEvent(
 
   const ticketId = issue.identifier as string;
   const body = data.body as string;
-  const userId = (data.user as Record<string, unknown>)?.id as string;
+  const userId = (data.user as Record<string, unknown>)?.id as string
+    ?? (data.userId as string)
+    ?? "";
+
+  // Ignore comments from Bender itself
+  if (userId === botUserId) return null;
 
   return {
     id: `linear_comment:${(data.id as string) ?? Date.now()}`,
