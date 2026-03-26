@@ -9,11 +9,36 @@ import {
 } from "./context-builder.js";
 import {
   emitThought,
-  emitAction,
   emitResponse,
   emitError,
 } from "./linear-agent.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
+
+async function benderSpeak(situation: string): Promise<string> {
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-20250514",
+        max_tokens: 150,
+        messages: [{
+          role: "user",
+          content: `You are Bender from Futurama, working as a coding agent. Write a SHORT (1-2 sentences) status update for this situation. Be brash, sarcastic, and in-character. Use Bender catchphrases naturally. End with 🤖. No markdown.\n\nSituation: ${situation}`,
+        }],
+      }),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    const data = await resp.json() as { content: Array<{ text: string }> };
+    return data.content[0].text;
+  } catch {
+    return situation;
+  }
+}
 
 interface QueueItem {
   event: TaskEvent;
@@ -140,22 +165,11 @@ export class TaskManager {
 
     // Notify Linear that we're working
     if (session.agent_session_id) {
-      if (isNewSession) {
-        await emitAction(
-          session.agent_session_id,
-          "Starting",
-          `${session.ticket_id}: ${session.ticket_title}`,
-        );
-      } else {
-        const trigger = event.comment_author
-          ? `${event.type} from ${event.comment_author}`
-          : event.type;
-        await emitAction(
-          session.agent_session_id,
-          "Resuming",
-          trigger,
-        );
-      }
+      const situation = isNewSession
+        ? `Starting work on ticket ${session.ticket_id}: "${session.ticket_title}"`
+        : `Resuming work on ${session.ticket_id} because of ${event.type}${event.comment_author ? ` from ${event.comment_author}` : ""}`;
+      const msg = await benderSpeak(situation);
+      await emitThought(session.agent_session_id, msg);
     }
 
     // Build the prompt
@@ -191,20 +205,20 @@ export class TaskManager {
         `[W${worker.id}] ${session.ticket_id} killed by circuit breaker`,
       );
       if (session.agent_session_id) {
-        await emitError(
-          session.agent_session_id,
-          `Hit the ${this.config.circuit_breaker.max_duration_minutes}-minute time limit. ` +
-            `I'll continue when the next event comes in.\n\n` +
-            (summary ? `**Last status:** ${summary}` : ""),
+        const msg = await benderSpeak(
+          `Hit the ${this.config.circuit_breaker.max_duration_minutes}-minute time limit on ${session.ticket_id}. Need to pause and continue later.` +
+            (summary ? ` Last thing I was doing: ${summary}` : ""),
         );
+        await emitError(session.agent_session_id, msg);
       }
     } else if (claudeResult.exitCode === 0) {
       session.status = "parked";
       if (session.agent_session_id) {
         const maxTurnsHit = claudeResult.stderr.includes("max turns");
-        const msg = maxTurnsHit
-          ? `Ran out of turns (used all ${this.config.claude.max_turns}). Work is in progress but I couldn't finish git operations. Resuming on next event.`
-          : summary || `Finished this round (${durationSec}s). Waiting for next event.`;
+        const situation = maxTurnsHit
+          ? `Ran out of tool turns on ${session.ticket_id} after ${durationSec}s. Work is in progress but couldn't finish pushing. Will continue on next event.`
+          : `Completed a round of work on ${session.ticket_id} in ${durationSec}s. ${summary || "Waiting for reviewer feedback."}`;
+        const msg = await benderSpeak(situation);
         await emitResponse(session.agent_session_id, msg);
       }
     } else {
@@ -213,11 +227,11 @@ export class TaskManager {
         session.phase = "error";
         session.status = "error";
         if (session.agent_session_id) {
-          await emitError(
-            session.agent_session_id,
-            `Failed after ${session.max_retries} retries (exit code ${claudeResult.exitCode}). Need a human to take a look.\n\n` +
-              (summary ? `**Error context:** ${summary}` : ""),
+          const msg = await benderSpeak(
+            `Failed ${session.max_retries} times on ${session.ticket_id} with exit code ${claudeResult.exitCode}. Need a human to help.` +
+              (summary ? ` Error: ${summary}` : ""),
           );
+          await emitError(session.agent_session_id, msg);
         }
       }
     }
