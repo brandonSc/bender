@@ -53,23 +53,18 @@ function parseAgentSessionEvent(
   payload: Record<string, unknown>,
   action: string,
 ): TaskEvent | null {
-  const data = payload.data as Record<string, unknown> | undefined;
-  if (!data) return null;
+  // AgentSessionEvent has agentSession, promptContext, etc. at top level (not under data)
+  const agentSession = payload.agentSession as Record<string, unknown> | undefined;
+  if (!agentSession) return null;
 
-  const agentSession = data.agentSession as Record<string, unknown> | undefined
-    ?? data;
-  const agentSessionId = (agentSession.id as string) ?? (data.id as string);
-
-  const issue = (agentSession.issue ?? data.issue) as Record<string, unknown> | undefined;
+  const agentSessionId = agentSession.id as string;
+  const issue = agentSession.issue as Record<string, unknown> | undefined;
   if (!issue) return null;
 
   const ticketId = (issue.identifier as string) ?? "";
   const title = (issue.title as string) ?? "";
   const url = (issue.url as string) ?? "";
-
-  const promptContext = (data.promptContext as string)
-    ?? (payload.promptContext as string)
-    ?? "";
+  const promptContext = (payload.promptContext as string) ?? "";
 
   if (action === "created") {
     return {
@@ -88,8 +83,10 @@ function parseAgentSessionEvent(
   }
 
   if (action === "prompted") {
-    const agentActivity = data.agentActivity as Record<string, unknown> | undefined;
-    const promptBody = (agentActivity?.body as string) ?? "";
+    const agentActivity = payload.agentActivity as Record<string, unknown> | undefined;
+    const promptBody = (agentActivity?.body as string)
+      ?? (agentSession.comment as Record<string, unknown>)?.body as string
+      ?? "";
 
     return {
       id: `agent_prompt:${agentSessionId}:${Date.now()}`,
