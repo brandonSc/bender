@@ -95,6 +95,10 @@ export interface TaskEvent {
   ticket_title?: string;
   ticket_url?: string;
 
+  // GitHub review comment-specific
+  review_comment_id?: number;
+  review_comment_path?: string;
+
   // Linear AgentSession-specific
   agent_session_id?: string;
   prompt_context?: string;

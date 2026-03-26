@@ -100,8 +100,30 @@ export function buildResumedPrompt(
     parts.push(
       "",
       "Respond to the human's message above. If they asked a question, answer it. If they gave feedback, acknowledge it and act on it.",
-      "Use `bender-say` to reply in the same channel the message came from. Stay in character as Bender.",
+      "Stay in character as Bender.",
     );
+    if (event.source === "github" && event.review_comment_id) {
+      parts.push(
+        "",
+        "**IMPORTANT: Reply in-thread on the PR review comment.** Use this exact command to reply:",
+        `\`\`\``,
+        `gh api repos/${event.repo}/pulls/${event.pr_number}/comments \\`,
+        `  -f "body=YOUR REPLY HERE" \\`,
+        `  -F "in_reply_to=${event.review_comment_id}"`,
+        `\`\`\``,
+        "Do NOT use `gh pr comment` — that posts a top-level comment instead of replying in the review thread.",
+      );
+    } else if (event.source === "github" && event.pr_number) {
+      parts.push(
+        "",
+        `Reply on the PR using: \`gh pr comment ${event.pr_number} --repo ${event.repo} --body "YOUR REPLY"\``,
+      );
+    } else if (event.source === "linear") {
+      parts.push(
+        "",
+        "Reply using `bender-say` to keep the conversation in Linear.",
+      );
+    }
   } else {
     parts.push("", "Resume your work. The reviewer has responded.");
   }

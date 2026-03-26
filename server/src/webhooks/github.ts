@@ -167,6 +167,8 @@ function parsePRReviewComment(
     pr_number: prNumber,
     comment_body: body,
     comment_author: author,
+    review_comment_id: comment.id as number,
+    review_comment_path: comment.path as string,
     raw: payload,
   };
 }
