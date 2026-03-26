@@ -104,6 +104,8 @@ function parseAgentSessionEvent(
       ?? (agentActivity?.body as string | undefined)
       ?? "";
 
+    console.log(`[linear] Prompted message from ${(agentActivity?.user as Record<string, unknown>)?.name ?? "unknown"}: "${promptBody}"`);
+
     return {
       id: `agent_prompt:${agentSessionId}:${Date.now()}`,
       type: "agent_prompt",
@@ -115,6 +117,7 @@ function parseAgentSessionEvent(
       ticket_url: url,
       agent_session_id: agentSessionId,
       comment_body: promptBody,
+      comment_author: (agentActivity?.user as Record<string, unknown>)?.name as string ?? "",
       prompt_context: promptContext,
       raw: payload,
     };
