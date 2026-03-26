@@ -97,10 +97,11 @@ function parseAgentSessionEvent(
   }
 
   if (action === "prompted") {
-    // The user's message is in agentActivity.body (from the prompted event payload)
+    // The user's message is in agentActivity.content.body
     const agentActivity = payload.agentActivity as Record<string, unknown> | undefined;
-    const promptBody = (agentActivity?.body as string | undefined)
-      ?? (payload.promptContext as string | undefined)
+    const activityContent = agentActivity?.content as Record<string, unknown> | undefined;
+    const promptBody = (activityContent?.body as string | undefined)
+      ?? (agentActivity?.body as string | undefined)
       ?? "";
 
     return {
