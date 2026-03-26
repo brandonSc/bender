@@ -118,6 +118,10 @@ function parsePullRequestReview(
     reviewState = "commented";
   }
 
+  // "commented" reviews with no body always come paired with a review_comment event
+  // that has the actual text — skip the empty review to avoid stealing the worker slot
+  if (reviewState === "commented" && !body) return null;
+
   const isApproval = reviewState === "approved" && REVIEWERS.has(author);
   const type: EventType = isApproval ? "reviewer_unblock" : "pr_review";
   const priority: EventPriority = isApproval ? 2 : 3;
