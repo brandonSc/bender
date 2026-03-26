@@ -185,8 +185,8 @@ app.post("/webhooks/linear", (req, res) => {
 
   console.log(`[linear] Received: ${webhookType}/${webhookAction}`);
   if (webhookType === "AgentSessionEvent" && webhookAction === "prompted") {
-    const activity = req.body.agentActivity ?? req.body.data?.agentActivity;
-    console.log(`[linear] Prompted — agentActivity.body: ${JSON.stringify(activity?.body ?? "(none)")}`);
+    const { agentSession, promptContext, ...rest } = req.body;
+    console.log(`[linear] Prompted payload (excluding agentSession/promptContext): ${JSON.stringify(rest, null, 2)}`);
   }
 
   // AgentSessionEvent webhooks are signed with the OAuth app's webhook secret.
