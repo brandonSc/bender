@@ -32,7 +32,8 @@ export function getAuthorizationUrl(
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "read,write,issues:create,comments:create",
+    scope: "read,write,issues:create,comments:create,app:assignable,app:mentionable",
+    actor: "app",
     prompt: "consent",
   });
   return `https://linear.app/oauth/authorize?${params.toString()}`;
