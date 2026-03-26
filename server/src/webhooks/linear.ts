@@ -30,11 +30,15 @@ export function parseLinearEvent(
   const action = payload.action as string;
 
   // Ignore events triggered by Bender itself (prevents feedback loops)
-  const actorId = (payload.data as Record<string, unknown>)?.userId as string
-    ?? (payload.data as Record<string, unknown>)?.actorId as string
+  const data = payload.data as Record<string, unknown> | undefined;
+  const actorId = (data?.userId as string)
+    ?? (data?.actorId as string)
+    ?? (data?.user as Record<string, unknown>)?.id as string
     ?? payload.appUserId as string
     ?? "";
-  if (type !== "AgentSessionEvent" && actorId === botUserId) {
+  const isBot = actorId === botUserId
+    || (data?.user as Record<string, unknown>)?.name === "Bender";
+  if (type !== "AgentSessionEvent" && isBot) {
     return null;
   }
 

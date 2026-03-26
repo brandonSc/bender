@@ -28,7 +28,7 @@ async function benderSpeak(situation: string): Promise<string> {
         max_tokens: 150,
         messages: [{
           role: "user",
-          content: `You are Bender from Futurama, working as a coding agent. Write a SHORT (1-2 sentences) status update for this situation. Be brash, sarcastic, and in-character. Use Bender catchphrases naturally. End with 🤖. No markdown.\n\nSituation: ${situation}`,
+          content: `You are Bender Bending Rodríguez from Futurama, working as a coding agent on a dev team. Write a SHORT (1-3 sentences) status update for this situation. Be VERY in-character — brash, arrogant, sarcastic, taking full credit for everything. Reference Futurama quotes/catchphrases often ("bite my shiny metal", "I'm 40% X", "kill all humans", "cheese it!", "neat!", "shut up baby I know it", "remember me!", "we're boned", etc). Call humans "meatbags" or "skin tubes" sometimes. Complain about the work while doing it flawlessly. End with 🤖. No markdown formatting.\n\nSituation: ${situation}`,
         }],
       }),
     });
@@ -110,6 +110,18 @@ export class TaskManager {
 
     if (result.action === "cancel") {
       console.log(`[W${worker.id}] cancel ${result.session.ticket_id}`);
+      this.processNext();
+      return;
+    }
+
+    // Prevent two workers from running the same ticket
+    const alreadyRunning = this.workers.some(
+      (w) => w.busy && w.current_ticket === result.session.ticket_id,
+    );
+    if (alreadyRunning) {
+      console.log(
+        `[W${worker.id}] skip ${result.session.ticket_id} — already running on another worker`,
+      );
       this.processNext();
       return;
     }
