@@ -9,6 +9,7 @@ import {
 } from "./context-builder.js";
 import {
   emitThought,
+  emitAction,
   emitResponse,
   emitError,
 } from "./linear-agent.js";
@@ -139,10 +140,22 @@ export class TaskManager {
 
     // Notify Linear that we're working
     if (session.agent_session_id) {
-      const desc = isNewSession
-        ? `Picking up ${session.ticket_id}: ${session.ticket_title}`
-        : `Resuming work on ${session.ticket_id} (${event.type})`;
-      await emitThought(session.agent_session_id, desc);
+      if (isNewSession) {
+        await emitAction(
+          session.agent_session_id,
+          "Starting",
+          `${session.ticket_id}: ${session.ticket_title}`,
+        );
+      } else {
+        const trigger = event.comment_author
+          ? `${event.type} from ${event.comment_author}`
+          : event.type;
+        await emitAction(
+          session.agent_session_id,
+          "Resuming",
+          trigger,
+        );
+      }
     }
 
     // Build the prompt
@@ -158,16 +171,19 @@ export class TaskManager {
     // Invoke Claude
     const claudeResult = await invokeClaude(session, prompt, this.config, githubToken);
 
+    const durationSec = Math.round(claudeResult.durationMs / 1000);
     console.log(
       `[W${worker.id}] ← ${session.ticket_id} exit=${claudeResult.exitCode} ` +
-        `duration=${Math.round(claudeResult.durationMs / 1000)}s ` +
-        `killed=${claudeResult.killed}`,
+        `duration=${durationSec}s killed=${claudeResult.killed}`,
     );
 
     // Update session with results
     if (claudeResult.sessionId && !session.claude_session_id) {
       session.claude_session_id = claudeResult.sessionId;
     }
+
+    // Extract a useful summary from Claude's output (last meaningful lines)
+    const summary = extractSummary(claudeResult.stdout || claudeResult.stderr);
 
     if (claudeResult.killed) {
       session.status = "parked";
@@ -177,16 +193,19 @@ export class TaskManager {
       if (session.agent_session_id) {
         await emitError(
           session.agent_session_id,
-          `Circuit breaker tripped after ${this.config.circuit_breaker.max_duration_minutes} minutes. I'll pick this up on the next event.`,
+          `Hit the ${this.config.circuit_breaker.max_duration_minutes}-minute time limit. ` +
+            `I'll continue when the next event comes in.\n\n` +
+            (summary ? `**Last status:** ${summary}` : ""),
         );
       }
     } else if (claudeResult.exitCode === 0) {
       session.status = "parked";
       if (session.agent_session_id) {
-        await emitResponse(
-          session.agent_session_id,
-          `Done with this step. Waiting for reviewer feedback or next event.`,
-        );
+        const maxTurnsHit = claudeResult.stderr.includes("max turns");
+        const msg = maxTurnsHit
+          ? `Ran out of turns (used all ${this.config.claude.max_turns}). Work is in progress but I couldn't finish git operations. Resuming on next event.`
+          : summary || `Finished this round (${durationSec}s). Waiting for next event.`;
+        await emitResponse(session.agent_session_id, msg);
       }
     } else {
       session.retry_count++;
@@ -196,7 +215,8 @@ export class TaskManager {
         if (session.agent_session_id) {
           await emitError(
             session.agent_session_id,
-            `Failed after ${session.max_retries} retries. Needs human attention.`,
+            `Failed after ${session.max_retries} retries (exit code ${claudeResult.exitCode}). Need a human to take a look.\n\n` +
+              (summary ? `**Error context:** ${summary}` : ""),
           );
         }
       }
@@ -227,4 +247,15 @@ export class TaskManager {
   private busyCount(): number {
     return this.workers.filter((w) => w.busy).length;
   }
+}
+
+function extractSummary(output: string): string {
+  if (!output) return "";
+  const lines = output.trim().split("\n").filter((l) => {
+    const t = l.trim();
+    return t.length > 0 && !t.startsWith("---") && !t.startsWith("===");
+  });
+  // Take the last few meaningful lines, capped at 500 chars
+  const tail = lines.slice(-5).join("\n");
+  return tail.length > 500 ? tail.slice(-500) : tail;
 }
