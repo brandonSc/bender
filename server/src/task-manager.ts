@@ -227,11 +227,15 @@ export class TaskManager {
       session.status = "parked";
       if (session.agent_session_id) {
         const maxTurnsHit = claudeResult.stderr.includes("max turns");
-        const situation = maxTurnsHit
-          ? `Ran out of tool turns on ${session.ticket_id} after ${durationSec}s. Work is in progress but couldn't finish pushing. Will continue on next event.`
-          : `Completed a round of work on ${session.ticket_id} in ${durationSec}s. ${summary || "Waiting for reviewer feedback."}`;
-        const msg = await benderSpeak(situation);
-        await emitResponse(session.agent_session_id, msg);
+        if (maxTurnsHit) {
+          const msg = await benderSpeak(
+            `Ran out of tool turns on ${session.ticket_id} after ${durationSec}s. Work is in progress but couldn't finish. Will continue on next event.`,
+          );
+          await emitResponse(session.agent_session_id, msg);
+        } else if (summary) {
+          // Claude's output is already in Bender voice — post it directly
+          await emitResponse(session.agent_session_id, summary);
+        }
       }
     } else {
       session.retry_count++;
@@ -281,7 +285,6 @@ function extractSummary(output: string): string {
     const t = l.trim();
     return t.length > 0 && !t.startsWith("---") && !t.startsWith("===");
   });
-  // Take the last few meaningful lines, capped at 500 chars
-  const tail = lines.slice(-5).join("\n");
-  return tail.length > 500 ? tail.slice(-500) : tail;
+  const tail = lines.slice(-15).join("\n");
+  return tail.length > 2000 ? tail.slice(-2000) : tail;
 }
