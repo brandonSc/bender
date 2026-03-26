@@ -170,7 +170,7 @@ function newSession(event: TaskEvent): Session {
     ticket_title: event.ticket_title ?? "",
     ticket_url: event.ticket_url ?? "",
 
-    repo: "earthly/lunar-lib", // Default; Claude will determine the actual repo
+    repo: "", // Claude determines the repo from the ticket context
     pr_number: null,
     branch: branchName,
 
@@ -200,7 +200,7 @@ function newSession(event: TaskEvent): Session {
 
     worktree_path: resolve(
       REPOS_DIR,
-      `lunar-lib-wt-${ticketId.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
+      `wt-${ticketId.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
     ),
 
     retry_count: 0,

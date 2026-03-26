@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { getBenderDir } from "./config.js";
 import type { Config, Session } from "./types.js";
 
@@ -38,7 +39,14 @@ export async function invokeClaude(
   args.push("--max-turns", config.claude.max_turns.toString());
   args.push("-p", prompt);
 
-  const cwd = session.worktree_path;
+  const reposDir = resolve(homedir(), "repos");
+  mkdirSync(reposDir, { recursive: true });
+
+  // Use worktree path if it exists, otherwise fall back to ~/repos.
+  // Claude will clone/create worktrees as needed.
+  const cwd = existsSync(session.worktree_path)
+    ? session.worktree_path
+    : reposDir;
   const startTime = Date.now();
 
   // Set up logging
@@ -74,6 +82,20 @@ export async function invokeClaude(
     let stdout = "";
     let stderr = "";
     let killed = false;
+
+    child.on("error", (err: Error) => {
+      clearTimeout(timeout);
+      const durationMs = Date.now() - startTime;
+      appendFileSync(logFile, `\n--- Spawn Error ---\n${err.message}\n`);
+      resolvePromise({
+        exitCode: 1,
+        sessionId: session.claude_session_id,
+        stdout: "",
+        stderr: err.message,
+        durationMs,
+        killed: false,
+      });
+    });
 
     child.stdout.on("data", (data: Buffer) => {
       const chunk = data.toString();
