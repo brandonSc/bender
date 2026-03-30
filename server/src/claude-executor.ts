@@ -38,6 +38,7 @@ export async function invokeClaude(
   }
 
   args.push("--dangerously-skip-permissions");
+  args.push("--effort", "max");
   if (config.claude.max_turns > 0) {
     args.push("--max-turns", config.claude.max_turns.toString());
   }
