@@ -41,7 +41,7 @@ export async function invokeClaude(
   if (!lightMode) {
     args.push("--effort", "max");
   }
-  args.push("--output-format", "json");
+  args.push("--output-format", "stream-json");
   if (config.claude.max_turns > 0) {
     args.push("--max-turns", config.claude.max_turns.toString());
   }
@@ -97,7 +97,9 @@ export async function invokeClaude(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let stdout = "";
+    let rawOutput = "";
+    let textOutput = "";
+    let sessionId = session.claude_session_id;
     let stderr = "";
     let killed = false;
 
@@ -115,9 +117,32 @@ export async function invokeClaude(
       });
     });
 
+    // Parse stream-json: each line is a JSON event
     child.stdout.on("data", (data: Buffer) => {
       const chunk = data.toString();
-      stdout += chunk;
+      rawOutput += chunk;
+
+      for (const line of chunk.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          // Extract text content
+          if (evt.type === "text" || evt.event?.delta?.text) {
+            const text = evt.text ?? evt.event?.delta?.text ?? "";
+            textOutput += text;
+          }
+          // Extract session ID from result event
+          if (evt.session_id) sessionId = evt.session_id;
+          if (evt.type === "result" && evt.session_id) sessionId = evt.session_id;
+          // Log tool use for visibility
+          if (evt.type === "tool_use") {
+            appendFileSync(logFile, `[tool] ${evt.tool ?? evt.name}: ${JSON.stringify(evt.input ?? "").slice(0, 100)}\n`);
+          }
+        } catch {
+          // Not JSON — raw text
+          textOutput += line;
+        }
+      }
       appendFileSync(logFile, chunk);
     });
 
@@ -149,28 +174,20 @@ export async function invokeClaude(
       appendFileSync(logFile, `Duration: ${durationMs}ms\n`);
       appendFileSync(logFile, `Killed: ${killed}\n`);
 
-      // Parse session_id from JSON output (--output-format json)
-      let sessionId = session.claude_session_id;
-      let responseText = stdout;
-      try {
-        const parsed = JSON.parse(stdout);
-        if (parsed.session_id) {
-          sessionId = parsed.session_id;
-        }
-        // The actual text response is in the "result" or "text" field
-        responseText = parsed.result ?? parsed.text ?? parsed.content ?? stdout;
-      } catch {
-        // stdout wasn't valid JSON — use raw output and try stderr for session ID
-        const sessionIdMatch = stderr.match(/session[:\s]+([a-f0-9-]{36})/i);
-        if (sessionIdMatch) sessionId = sessionIdMatch[1];
+      // Session ID was captured from stream events above
+      // Also try stderr as fallback
+      if (!sessionId) {
+        const match = stderr.match(/session[:\s]+([a-f0-9-]{36})/i);
+        if (match) sessionId = match[1];
       }
 
       appendFileSync(logFile, `Session ID: ${sessionId ?? "none"}\n`);
+      appendFileSync(logFile, `Text output length: ${textOutput.length}\n`);
 
       resolvePromise({
         exitCode: code ?? 1,
         sessionId,
-        stdout: responseText,
+        stdout: textOutput || rawOutput,
         stderr,
         durationMs,
         killed,
