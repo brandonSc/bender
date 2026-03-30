@@ -23,6 +23,7 @@ import {
 import { getViewer } from "./linear-client.js";
 import { postMessage, addReaction } from "./slack-client.js";
 import { evaluateLurk } from "./slack-evaluator.js";
+import { trackThread, isActiveThread } from "./slack-threads.js";
 
 // --- Bootstrap ---
 
@@ -263,10 +264,19 @@ app.post("/webhooks/slack", async (req, res) => {
   const slackEvent = req.body.event as Record<string, unknown>;
   const isDirectMention = slackEvent?.type === "app_mention";
   const isDM = (slackEvent?.channel_type as string) === "im";
+  const threadTs = (slackEvent?.thread_ts as string) ?? (slackEvent?.ts as string);
+  const channel = slackEvent?.channel as string;
+  const inTrackedThread = isActiveThread(channel, slackEvent?.thread_ts as string);
 
-  if (isDirectMention || isDM) {
+  if (isDirectMention) {
+    // Track this thread so we respond to follow-ups without @mention
+    trackThread(`${channel}:${threadTs}`);
+  }
+
+  if (isDirectMention || isDM || inTrackedThread) {
+    const reason = isDirectMention ? "@mention" : isDM ? "DM" : "active thread";
     console.log(
-      `[slack] ${isDM ? "DM" : "@mention"} from ${event.slack_user}: "${event.comment_body?.slice(0, 80)}"`,
+      `[slack] ${reason} from ${event.slack_user}: "${event.comment_body?.slice(0, 80)}"`,
     );
     taskManager.enqueue(event);
   } else {
