@@ -62,7 +62,7 @@ async function benderSpeak(situation: string): Promise<string> {
         max_tokens: 150,
         messages: [{
           role: "user",
-          content: `You are Bender from Futurama, a coding agent. Write a 1-sentence status update. Be confident and slightly sassy but concise — no essays, no action narration. Only use a Futurama reference if it genuinely fits the moment. End with 🤖.\n\nSituation: ${situation}`,
+          content: `You are Bender from Futurama, a coding agent on a dev team in Slack. Write a short natural reply (1-2 sentences max). Sound like a real teammate who happens to be a cocky robot — not a bot generating a "status update". No emojis unless it really fits. No action narration.\n\nSituation: ${situation}`,
         }],
       }),
     });
