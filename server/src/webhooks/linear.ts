@@ -22,6 +22,9 @@ export function verifyLinearSignature(
  * 1. AgentSessionEvent (type="AgentSessionEvent") — when Bender is assigned/mentioned/prompted
  * 2. Issue/Comment (type="Issue"|"Comment") — legacy fallback for non-agent events
  */
+// Track recent agent prompts to deduplicate Comment/create events
+const recentAgentPrompts = new Map<string, number>();
+
 export function parseLinearEvent(
   payload: Record<string, unknown>,
   botUserId: string,
@@ -43,8 +46,14 @@ export function parseLinearEvent(
   }
 
   switch (type) {
-    case "AgentSessionEvent":
-      return parseAgentSessionEvent(payload, action);
+    case "AgentSessionEvent": {
+      const result = parseAgentSessionEvent(payload, action);
+      // Track that we got an agent prompt for this ticket — ignore the duplicate Comment/create
+      if (result?.ticket_id) {
+        recentAgentPrompts.set(result.ticket_id, Date.now());
+      }
+      return result;
+    }
     case "Issue":
       return parseIssueEvent(
         payload.data as Record<string, unknown>,
@@ -193,6 +202,12 @@ function parseCommentEvent(
 
   // Ignore comments from Bender itself
   if (userId === botUserId) return null;
+
+  // Ignore Comment/create that duplicates a recent AgentSessionEvent/prompted
+  const recentPrompt = recentAgentPrompts.get(ticketId);
+  if (recentPrompt && Date.now() - recentPrompt < 5000) {
+    return null;
+  }
 
   return {
     id: `linear_comment:${(data.id as string) ?? Date.now()}`,
