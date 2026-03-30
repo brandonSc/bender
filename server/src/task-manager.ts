@@ -1,6 +1,6 @@
 import type { Config, TaskEvent, Worker } from "./types.js";
 import { routeEvent, type RouteResult } from "./router.js";
-import { saveSession, findSessionForEvent } from "./session-store.js";
+import { saveSession, findSessionForEvent, listActiveSessions } from "./session-store.js";
 import { invokeClaude } from "./claude-executor.js";
 import {
   buildNewSessionPrompt,
@@ -186,6 +186,23 @@ export class TaskManager {
    * Dispatch an event to a worker — route it and invoke Claude if needed.
    */
   private async dispatch(worker: Worker, event: TaskEvent): Promise<void> {
+    // Slack messages bypass the session router — handle directly
+    if (event.source === "slack" && event.slack_channel) {
+      worker.busy = true;
+      worker.current_ticket = `slack:${event.slack_channel}`;
+      console.log(`[W${worker.id}] → slack ${event.slack_channel} "${event.comment_body?.slice(0, 50)}"`);
+      try {
+        await this.handleSlackMessage(worker, event);
+      } catch (err) {
+        console.error(`[W${worker.id}] slack error:`, err);
+      } finally {
+        worker.busy = false;
+        worker.current_ticket = null;
+        this.processNext();
+      }
+      return;
+    }
+
     const result = routeEvent(event);
 
     if (!result || result.action === "skip") {
@@ -344,6 +361,50 @@ export class TaskManager {
     }
 
     saveSession(session);
+  }
+
+  private async handleSlackMessage(
+    worker: Worker,
+    event: TaskEvent,
+  ): Promise<void> {
+    const sessions = listActiveSessions();
+    const sessionSummary = sessions
+      .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
+      .join("\n") || "No active work.";
+
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, a bit cocky, concise. Use Futurama references when they fit naturally. Never say "I'd be happy to help" or other Claude-isms. You're always slightly annoyed but helpful.
+
+Your active work:\n${sessionSummary}
+
+If someone asks you to do work (create tickets, check PRs, etc.), tell them what you'd do and that they should assign you in Linear or @mention you in a channel. For DMs, keep it conversational.`,
+          messages: [{ role: "user", content: event.comment_body ?? "hey" }],
+        }),
+      });
+
+      if (!resp.ok) {
+        console.error(`[W${worker.id}] Slack Sonnet API error: ${resp.status}`);
+        return;
+      }
+
+      const data = (await resp.json()) as { content: Array<{ text: string }> };
+      const reply = data.content[0].text;
+
+      await slackPostMessage(event.slack_channel!, reply, event.slack_thread_ts);
+      console.log(`[W${worker.id}] ← slack reply sent (${reply.length} chars)`);
+    } catch (err) {
+      console.error(`[W${worker.id}] Slack handler error:`, err);
+    }
   }
 
   /**
