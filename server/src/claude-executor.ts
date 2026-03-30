@@ -42,6 +42,7 @@ export async function invokeClaude(
     args.push("--effort", "max");
   }
   args.push("--output-format", "stream-json");
+  args.push("--verbose");
   if (config.claude.max_turns > 0) {
     args.push("--max-turns", config.claude.max_turns.toString());
   }
