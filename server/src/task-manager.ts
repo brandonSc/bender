@@ -1,6 +1,6 @@
 import type { Config, TaskEvent, Worker } from "./types.js";
 import { routeEvent, type RouteResult } from "./router.js";
-import { saveSession } from "./session-store.js";
+import { saveSession, findSessionForEvent } from "./session-store.js";
 import { invokeClaude } from "./claude-executor.js";
 import {
   buildNewSessionPrompt,
@@ -112,15 +112,35 @@ export class TaskManager {
 
   /**
    * Try to assign the next queued event to a free worker.
+   * Skips events for tickets already being worked on — they stay in the queue.
    */
   private processNext(): void {
     if (this.queue.length === 0) return;
 
     const worker = this.workers.find((w) => !w.busy);
-    if (!worker) return; // All workers busy
+    if (!worker) return;
 
-    const item = this.queue.shift()!;
+    // Find the first queued event whose ticket isn't already running
+    const busyTickets = new Set(
+      this.workers.filter((w) => w.busy && w.current_ticket).map((w) => w.current_ticket),
+    );
+
+    const idx = this.queue.findIndex((item) => {
+      const ticketId = item.event.ticket_id
+        ?? this.resolveTicketForPR(item.event.pr_number);
+      return !ticketId || !busyTickets.has(ticketId);
+    });
+
+    if (idx === -1) return; // All queued events are for busy tickets — wait
+
+    const item = this.queue.splice(idx, 1)[0];
     this.dispatch(worker, item.event);
+  }
+
+  private resolveTicketForPR(prNumber?: number): string | null {
+    if (!prNumber) return null;
+    const session = findSessionForEvent({ pr_number: prNumber });
+    return session?.ticket_id ?? null;
   }
 
   /**
@@ -139,18 +159,6 @@ export class TaskManager {
 
     if (result.action === "cancel") {
       console.log(`[W${worker.id}] cancel ${result.session.ticket_id}`);
-      this.processNext();
-      return;
-    }
-
-    // Prevent two workers from running the same ticket
-    const alreadyRunning = this.workers.some(
-      (w) => w.busy && w.current_ticket === result.session.ticket_id,
-    );
-    if (alreadyRunning) {
-      console.log(
-        `[W${worker.id}] skip ${result.session.ticket_id} — already running on another worker`,
-      );
       this.processNext();
       return;
     }

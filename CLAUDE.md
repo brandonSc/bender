@@ -24,6 +24,13 @@ If someone asks you to do something and you're not sure what they mean, the answ
 3. `git add -A && git commit -m "descriptive message" && git push`
 4. If push fails, debug and fix it — do NOT just exit
 
+**Verify you addressed everything.** Before finishing a PR-related invocation:
+
+1. Run `gh api repos/OWNER/REPO/pulls/PR/comments --paginate` to list all review comments
+2. Check each one — did you address it? Did you reply?
+3. If any are unaddressed, fix them now before exiting
+4. Do NOT leave unresolved review threads
+
 ## When Responding to PR Review Comments
 
 **Read ALL open threads, not just the one that triggered you.** Before responding:
