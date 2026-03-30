@@ -1,4 +1,7 @@
-import type { Config, TaskEvent, Worker } from "./types.js";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import type { Config, TaskEvent, Worker, Session } from "./types.js";
 import { routeEvent, type RouteResult } from "./router.js";
 import { saveSession, findSessionForEvent, listActiveSessions } from "./session-store.js";
 import { invokeClaude } from "./claude-executor.js";
@@ -187,13 +190,19 @@ export class TaskManager {
    * Dispatch an event to a worker — route it and invoke Claude if needed.
    */
   private async dispatch(worker: Worker, event: TaskEvent): Promise<void> {
-    // Slack messages bypass the session router — handle directly
+    // Slack messages — classify as chat vs work request
     if (event.source === "slack" && event.slack_channel) {
       worker.busy = true;
       worker.current_ticket = `slack:${event.slack_channel}`;
       console.log(`[W${worker.id}] → slack ${event.slack_channel} "${event.comment_body?.slice(0, 50)}"`);
       try {
-        await this.handleSlackMessage(worker, event);
+        const isWorkRequest = await this.classifySlackMessage(event.comment_body ?? "");
+        if (isWorkRequest) {
+          console.log(`[W${worker.id}] Slack work request — using full CLI`);
+          await this.handleSlackWork(worker, event);
+        } else {
+          await this.handleSlackMessage(worker, event);
+        }
       } catch (err) {
         console.error(`[W${worker.id}] slack error:`, err);
       } finally {
@@ -372,6 +381,129 @@ export class TaskManager {
     }
 
     saveSession(session);
+  }
+
+  private async classifySlackMessage(text: string): Promise<boolean> {
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-20250514",
+          max_tokens: 10,
+          messages: [{
+            role: "user",
+            content: `Is this a work request (asking an agent to do something: write code, create repos, run tests, create tickets, check PRs, fix bugs, deploy, etc.) or just chat/question? Reply ONLY "work" or "chat".\n\nMessage: "${text}"`,
+          }],
+        }),
+      });
+      if (!resp.ok) return false;
+      const data = (await resp.json()) as { content: Array<{ text: string }> };
+      return data.content[0].text.trim().toLowerCase().includes("work");
+    } catch {
+      return false;
+    }
+  }
+
+  private async handleSlackWork(
+    worker: Worker,
+    event: TaskEvent,
+  ): Promise<void> {
+    // Record incoming message
+    if (event.slack_user && event.comment_body) {
+      recordMessage(event.slack_channel!, event.slack_user, event.comment_body, event.id);
+    }
+
+    // Find active session to work in, or use a generic work context
+    const sessions = listActiveSessions();
+    const activeSession = sessions.length > 0 ? sessions[0] : null;
+
+    // Get GitHub token
+    let githubToken: string | undefined;
+    try {
+      const octokit = getAppOctokit();
+      const { data: installations } = await octokit.rest.apps.listInstallations();
+      if (installations.length > 0) {
+        githubToken = await getInstallationToken(installations[0].id);
+      }
+    } catch {}
+
+    // Build prompt with work context
+    const identity = existsSync(resolve(homedir(), "repos", "BENDER-IDENTITY.md"))
+      ? readFileSync(resolve(homedir(), "repos", "BENDER-IDENTITY.md"), "utf-8")
+      : "You are Bender, a coding agent.";
+
+    const sessionContext = activeSession
+      ? `Active ticket: ${activeSession.ticket_id} "${activeSession.ticket_title}" (PR #${activeSession.pr_number ?? "none"}, branch: ${activeSession.branch})`
+      : "No active tickets.";
+
+    const prompt = [
+      identity,
+      "",
+      `## Work Request from Slack`,
+      `From: ${event.slack_user}`,
+      `Channel: ${event.slack_channel}`,
+      `Message: ${event.comment_body}`,
+      "",
+      `## Context`,
+      sessionContext,
+      "",
+      `## Instructions`,
+      `Do the work requested. You have full tool access — clone repos, write code, run tests, push, create PRs.`,
+      `When done, post a SHORT summary of what you did. Keep it concise.`,
+      `Stay in character as Bender.`,
+    ].join("\n");
+
+    // Use a temporary session-like object for the executor
+    const tempSession: Session = activeSession ?? {
+      ticket_id: "slack-work",
+      ticket_title: "Slack work request",
+      ticket_url: "",
+      repo: "",
+      pr_number: null,
+      branch: "",
+      phase: "starting" as const,
+      status: "active" as const,
+      go_ahead: { brandon: false, vlad: false, override: null },
+      approvals: { brandon: false, vlad: false, override: null },
+      blocked: null,
+      last_event_id: event.id,
+      last_activity_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      conversation_summary: "",
+      claude_session_id: null,
+      agent_session_id: null,
+      checkpoint_count: 0,
+      last_checkpoint_summary: null,
+      ticket_notes: [],
+      test_results_posted: false,
+      ci_status: "unknown" as const,
+      worktree_path: resolve(homedir(), "repos"),
+      retry_count: 0,
+      max_retries: 3,
+    };
+
+    // Don't resume for slack work — fresh invocation
+    const savedSessionId = tempSession.claude_session_id;
+    tempSession.claude_session_id = null;
+
+    const claudeResult = await invokeClaude(tempSession, prompt, this.config, githubToken, false);
+
+    tempSession.claude_session_id = savedSessionId;
+
+    const summary = extractSummary(claudeResult.stdout || claudeResult.stderr);
+    if (summary && event.slack_channel) {
+      await slackPostMessage(event.slack_channel, summary, event.slack_thread_ts);
+      recordMessage(event.slack_channel, "bender", summary, `reply:${event.id}`);
+    }
+
+    console.log(
+      `[W${worker.id}] ← slack work done exit=${claudeResult.exitCode} duration=${Math.round(claudeResult.durationMs / 1000)}s`,
+    );
   }
 
   private async handleSlackMessage(
