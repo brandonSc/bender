@@ -119,29 +119,45 @@ export async function invokeClaude(
     });
 
     // Parse stream-json: each line is a JSON event
+    let lineBuf = "";
     child.stdout.on("data", (data: Buffer) => {
       const chunk = data.toString();
       rawOutput += chunk;
+      lineBuf += chunk;
 
-      for (const line of chunk.split("\n")) {
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop() ?? "";
+
+      for (const line of lines) {
         if (!line.trim()) continue;
         try {
           const evt = JSON.parse(line);
-          // Extract text content
-          if (evt.type === "text" || evt.event?.delta?.text) {
-            const text = evt.text ?? evt.event?.delta?.text ?? "";
-            textOutput += text;
-          }
-          // Extract session ID from result event
+
+          // Capture session ID from any event that has it
           if (evt.session_id) sessionId = evt.session_id;
-          if (evt.type === "result" && evt.session_id) sessionId = evt.session_id;
+
+          // Extract text from assistant messages
+          if (evt.type === "assistant" && evt.message?.content) {
+            for (const block of evt.message.content) {
+              if (block.type === "text") textOutput += block.text;
+            }
+          }
+
+          // Extract text from result event
+          if (evt.type === "result" && evt.result) {
+            textOutput += evt.result;
+          }
+
           // Log tool use for visibility
-          if (evt.type === "tool_use") {
-            appendFileSync(logFile, `[tool] ${evt.tool ?? evt.name}: ${JSON.stringify(evt.input ?? "").slice(0, 100)}\n`);
+          if (evt.type === "assistant" && evt.message?.content) {
+            for (const block of evt.message.content) {
+              if (block.type === "tool_use") {
+                appendFileSync(logFile, `[tool] ${block.name}: ${JSON.stringify(block.input?.command ?? block.input?.path ?? "").slice(0, 120)}\n`);
+              }
+            }
           }
         } catch {
-          // Not JSON — raw text
-          textOutput += line;
+          // Not JSON
         }
       }
       appendFileSync(logFile, chunk);
