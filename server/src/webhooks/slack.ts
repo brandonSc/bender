@@ -36,8 +36,11 @@ export function parseSlackEvent(
   // Ignore bot's own messages
   if (user === botUserId || event.bot_id) return null;
 
-  // Ignore message subtypes (edits, joins, etc.) except regular messages
-  if (event.subtype && event.subtype !== "message_changed") return null;
+  // Ignore message subtypes (edits, joins, link unfurls, etc.)
+  if (event.subtype) return null;
+
+  // Ignore messages with no text or user (link previews, unfurls)
+  if (!text || !user) return null;
 
   if (eventType === "app_mention") {
     // Direct @Bender mention — always respond

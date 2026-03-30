@@ -136,16 +136,19 @@ export async function invokeClaude(
           // Capture session ID from any event that has it
           if (evt.session_id) sessionId = evt.session_id;
 
-          // Extract text from assistant messages
+          // Only capture text from the LAST assistant message (overwrite, don't accumulate)
+          // This avoids internal monologue between tool calls leaking into the summary
           if (evt.type === "assistant" && evt.message?.content) {
+            let msgText = "";
             for (const block of evt.message.content) {
-              if (block.type === "text") textOutput += block.text;
+              if (block.type === "text") msgText += block.text;
             }
+            if (msgText) textOutput = msgText;
           }
 
-          // Extract text from result event
+          // Result event text (final summary from Claude)
           if (evt.type === "result" && evt.result) {
-            textOutput += evt.result;
+            textOutput = evt.result;
           }
 
           // Log tool use for visibility
