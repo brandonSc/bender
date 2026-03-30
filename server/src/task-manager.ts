@@ -199,6 +199,12 @@ export class TaskManager {
         const isWorkRequest = await this.classifySlackMessage(event.comment_body ?? "");
         if (isWorkRequest) {
           console.log(`[W${worker.id}] Slack work request — using full CLI`);
+          // Acknowledge immediately so the user knows we're on it
+          await slackPostMessage(
+            event.slack_channel!,
+            "On it. 🤖",
+            event.slack_thread_ts,
+          );
           await this.handleSlackWork(worker, event);
         } else {
           await this.handleSlackMessage(worker, event);
