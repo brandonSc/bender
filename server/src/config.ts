@@ -8,7 +8,7 @@ const BENDER_DIR = resolve(homedir(), ".bender");
 const DEFAULT_CONFIG: Config = {
   claude: {
     model: "claude-sonnet-4-20250514",
-    max_turns: 200,
+    max_turns: 0,
   },
   workers: {
     max_concurrent: 3,

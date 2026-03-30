@@ -38,7 +38,9 @@ export async function invokeClaude(
   }
 
   args.push("--dangerously-skip-permissions");
-  args.push("--max-turns", config.claude.max_turns.toString());
+  if (config.claude.max_turns > 0) {
+    args.push("--max-turns", config.claude.max_turns.toString());
+  }
   args.push("-p", prompt);
 
   const reposDir = resolve(homedir(), "repos");

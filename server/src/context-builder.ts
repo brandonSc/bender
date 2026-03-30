@@ -96,37 +96,36 @@ export function buildResumedPrompt(
     parts.push(`- Blocked: ${session.blocked.reason}`);
   }
 
-  if (event.comment_body) {
+  if (event.source === "github" && event.pr_number) {
     parts.push(
       "",
-      "Respond to the human's message above. If they asked a question, answer it. If they gave feedback, acknowledge it and act on it.",
-      "Stay in character as Bender.",
+      "## Instructions",
+      `**Before responding, read ALL open review threads on PR #${event.pr_number}:**`,
+      `\`gh api repos/${event.repo}/pulls/${event.pr_number}/comments --paginate\``,
+      "",
+      "Address EVERY unresolved comment — not just the one that triggered this event.",
+      "Make ALL requested code changes, commit, and push before replying.",
     );
-    if (event.source === "github" && event.review_comment_id) {
+    if (event.review_comment_id) {
       parts.push(
         "",
-        "**IMPORTANT: Reply in-thread on the PR review comment.** Use this exact command to reply:",
-        `\`\`\``,
+        "**Reply in-thread on each review comment you address.** Use this command:",
+        "```",
         `gh api repos/${event.repo}/pulls/${event.pr_number}/comments \\`,
-        `  -f "body=YOUR REPLY HERE" \\`,
-        `  -F "in_reply_to=${event.review_comment_id}"`,
-        `\`\`\``,
-        "Do NOT use `gh pr comment` — that posts a top-level comment instead of replying in the review thread.",
-      );
-    } else if (event.source === "github" && event.pr_number) {
-      parts.push(
-        "",
-        `Reply on the PR using: \`gh pr comment ${event.pr_number} --repo ${event.repo} --body "YOUR REPLY"\``,
-      );
-    } else if (event.source === "linear") {
-      parts.push(
-        "",
-        "Reply using `bender-say` to keep the conversation in Linear.",
+        `  -f "body=YOUR REPLY" -F "in_reply_to=COMMENT_ID"`,
+        "```",
+        "Do NOT use `gh pr comment` — that posts top-level, not in-thread.",
       );
     }
-  } else {
-    parts.push("", "Resume your work. The reviewer has responded.");
+  } else if (event.comment_body && event.source === "linear") {
+    parts.push(
+      "",
+      "## Instructions",
+      "Respond to the human's message above. Reply using `bender-say` to keep the conversation in Linear.",
+    );
   }
+
+  parts.push("", "Stay in character as Bender. Never exit with uncommitted changes.");
 
   return parts.join("\n");
 }
