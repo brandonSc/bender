@@ -262,11 +262,11 @@ app.post("/webhooks/slack", async (req, res) => {
 
   const slackEvent = req.body.event as Record<string, unknown>;
   const isDirectMention = slackEvent?.type === "app_mention";
+  const isDM = (slackEvent?.channel_type as string) === "im";
 
-  if (isDirectMention) {
-    // @Bender mention — queue for full Claude invocation
+  if (isDirectMention || isDM) {
     console.log(
-      `[slack] @mention in ${event.slack_channel} by ${event.slack_user}: "${event.comment_body?.slice(0, 80)}"`,
+      `[slack] ${isDM ? "DM" : "@mention"} from ${event.slack_user}: "${event.comment_body?.slice(0, 80)}"`,
     );
     taskManager.enqueue(event);
   } else {

@@ -59,11 +59,14 @@ export function parseSlackEvent(
   }
 
   if (eventType === "message") {
-    // Regular channel message — lurk mode evaluation
+    // DMs are direct requests — treat like @mention
+    const channelType = event.channel_type as string | undefined;
+    const isDM = channelType === "im";
+
     return {
       id: `slack_msg:${ts}`,
-      type: "informational",
-      priority: 5,
+      type: isDM ? "reviewer_comment" : "informational",
+      priority: isDM ? 3 : 5,
       timestamp: new Date().toISOString(),
       source: "slack",
       comment_body: text,
