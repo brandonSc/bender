@@ -1,0 +1,75 @@
+const SLACK_API = "https://slack.com/api";
+
+function getToken(): string {
+  return process.env.SLACK_BOT_TOKEN ?? "";
+}
+
+async function slackApi(
+  method: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const token = getToken();
+  if (!token) throw new Error("SLACK_BOT_TOKEN not set");
+
+  const resp = await fetch(`${SLACK_API}/${method}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = (await resp.json()) as Record<string, unknown>;
+  if (!data.ok) {
+    console.error(`[slack] ${method} failed:`, data.error);
+  }
+  return data;
+}
+
+export async function postMessage(
+  channel: string,
+  text: string,
+  threadTs?: string,
+): Promise<void> {
+  await slackApi("chat.postMessage", {
+    channel,
+    text,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+  });
+}
+
+export async function addReaction(
+  channel: string,
+  timestamp: string,
+  emoji: string,
+): Promise<void> {
+  await slackApi("reactions.add", {
+    channel,
+    timestamp,
+    name: emoji,
+  });
+}
+
+export async function getThreadMessages(
+  channel: string,
+  threadTs: string,
+): Promise<Array<{ user: string; text: string; ts: string }>> {
+  const data = await slackApi("conversations.replies", {
+    channel,
+    ts: threadTs,
+    limit: 20,
+  });
+  return (data.messages as Array<{ user: string; text: string; ts: string }>) ?? [];
+}
+
+export async function getChannelHistory(
+  channel: string,
+  limit = 10,
+): Promise<Array<{ user: string; text: string; ts: string }>> {
+  const data = await slackApi("conversations.history", {
+    channel,
+    limit,
+  });
+  return (data.messages as Array<{ user: string; text: string; ts: string }>) ?? [];
+}

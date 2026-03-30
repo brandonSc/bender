@@ -81,7 +81,7 @@ export interface TaskEvent {
   type: EventType;
   priority: EventPriority;
   timestamp: string;
-  source: "github" | "linear";
+  source: "github" | "linear" | "slack";
 
   // GitHub-specific
   repo?: string;
@@ -102,6 +102,11 @@ export interface TaskEvent {
   // Linear AgentSession-specific
   agent_session_id?: string;
   prompt_context?: string;
+
+  // Slack-specific
+  slack_channel?: string;
+  slack_thread_ts?: string;
+  slack_user?: string;
 
   // Raw payload for the executor
   raw: unknown;
@@ -136,6 +141,8 @@ export interface Secrets {
   LINEAR_APP_WEBHOOK_SECRET: string;
   LUNAR_HUB_TOKEN: string;
   ANTHROPIC_API_KEY: string;
+  SLACK_BOT_TOKEN: string;
+  SLACK_SIGNING_SECRET: string;
 }
 
 // --- Worker ---

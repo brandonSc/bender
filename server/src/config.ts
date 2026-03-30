@@ -70,6 +70,8 @@ export function loadSecrets(): Secrets {
     LINEAR_APP_WEBHOOK_SECRET: process.env.LINEAR_APP_WEBHOOK_SECRET ?? "",
     LUNAR_HUB_TOKEN: process.env.LUNAR_HUB_TOKEN ?? "",
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
+    SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
+    SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET ?? "",
   };
 }
 

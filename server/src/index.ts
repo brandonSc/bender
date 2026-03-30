@@ -9,6 +9,10 @@ import {
   verifyLinearSignature,
   parseLinearEvent,
 } from "./webhooks/linear.js";
+import {
+  verifySlackSignature,
+  parseSlackEvent,
+} from "./webhooks/slack.js";
 import { TaskManager } from "./task-manager.js";
 import { listActiveSessions } from "./session-store.js";
 import {
@@ -17,6 +21,8 @@ import {
   exchangeCode,
 } from "./linear-auth.js";
 import { getViewer } from "./linear-client.js";
+import { postMessage, addReaction } from "./slack-client.js";
+import { evaluateLurk } from "./slack-evaluator.js";
 
 // --- Bootstrap ---
 
@@ -222,6 +228,88 @@ app.post("/webhooks/linear", (req, res) => {
   res.json({ status: "queued", event_id: event.id });
 });
 
+// --- Slack webhook ---
+
+let slackBotUserId = "";
+
+app.post("/webhooks/slack", async (req, res) => {
+  const rawBody = (req as unknown as Record<string, unknown>).rawBody as string;
+  const timestamp = req.headers["x-slack-request-timestamp"] as string | undefined;
+  const signature = req.headers["x-slack-signature"] as string | undefined;
+
+  if (
+    secrets.SLACK_SIGNING_SECRET &&
+    !verifySlackSignature(rawBody, timestamp, signature, secrets.SLACK_SIGNING_SECRET)
+  ) {
+    console.warn("[slack] Invalid signature — rejecting");
+    res.status(401).json({ error: "Invalid signature" });
+    return;
+  }
+
+  // Handle Slack URL verification challenge
+  if (req.body.type === "url_verification") {
+    res.json({ challenge: req.body.challenge });
+    return;
+  }
+
+  // Must respond within 3 seconds — process async
+  res.json({ ok: true });
+
+  const event = parseSlackEvent(req.body, slackBotUserId);
+  if (!event) return;
+
+  const slackEvent = req.body.event as Record<string, unknown>;
+  const isDirectMention = slackEvent?.type === "app_mention";
+
+  if (isDirectMention) {
+    // @Bender mention — queue for full Claude invocation
+    console.log(
+      `[slack] @mention in ${event.slack_channel} by ${event.slack_user}: "${event.comment_body?.slice(0, 80)}"`,
+    );
+    taskManager.enqueue(event);
+  } else {
+    // Lurk mode — evaluate whether to chime in
+    if (!secrets.SLACK_BOT_TOKEN) return;
+
+    const decision = await evaluateLurk(
+      event.slack_channel!,
+      event.comment_body ?? "",
+      (slackEvent.ts as string) ?? "",
+      event.slack_thread_ts,
+    );
+
+    if (decision.action === "emoji_react" && decision.emoji) {
+      console.log(`[slack] Lurk → react :${decision.emoji}: (confidence=${decision.confidence})`);
+      await addReaction(event.slack_channel!, (slackEvent.ts as string) ?? "", decision.emoji);
+    } else if (decision.action === "reply" && decision.suggested_reply) {
+      console.log(`[slack] Lurk → reply (confidence=${decision.confidence})`);
+      await postMessage(
+        event.slack_channel!,
+        decision.suggested_reply,
+        decision.reply_in_thread ? (event.slack_thread_ts ?? (slackEvent.ts as string)) : undefined,
+      );
+    }
+  }
+});
+
+// Resolve Slack bot user ID on startup
+if (secrets.SLACK_BOT_TOKEN) {
+  fetch("https://slack.com/api/auth.test", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${secrets.SLACK_BOT_TOKEN}` },
+  })
+    .then((r) => r.json() as Promise<Record<string, unknown>>)
+    .then((data) => {
+      if (data.ok) {
+        slackBotUserId = data.user_id as string;
+        console.log(`[slack] Connected as: ${data.user} (${slackBotUserId})`);
+      } else {
+        console.warn("[slack] Not connected:", data.error);
+      }
+    })
+    .catch((err) => console.warn("[slack] Failed to resolve bot identity:", err));
+}
+
 // --- Start ---
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
@@ -235,6 +323,7 @@ app.listen(PORT, () => {
   console.log("Endpoints:");
   console.log(`  POST /webhooks/github`);
   console.log(`  POST /webhooks/linear`);
+  console.log(`  POST /webhooks/slack`);
   console.log(`  GET  /auth/linear          (connect to Linear)`);
   console.log(`  GET  /auth/linear/status   (check connection)`);
   console.log(`  GET  /status`);

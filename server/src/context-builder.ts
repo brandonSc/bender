@@ -135,6 +135,15 @@ export function buildResumedPrompt(
       "## Instructions",
       "Respond to the human's message above. Reply using `bender-say` to keep the conversation in Linear.",
     );
+  } else if (event.comment_body && event.source === "slack") {
+    parts.push(
+      "",
+      "## Instructions",
+      `Someone mentioned you in Slack (channel: ${event.slack_channel}).`,
+      "Respond to their message. Keep it concise — Slack messages should be short and punchy.",
+      "If they're asking you to do work (create ticket, check PR, etc.), do the work and report back.",
+      "Stay in character as Bender.",
+    );
   }
 
   parts.push("", "Stay in character as Bender. Never exit with uncommitted changes.");

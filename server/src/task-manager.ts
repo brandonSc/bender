@@ -12,6 +12,7 @@ import {
   emitResponse,
   emitError,
 } from "./linear-agent.js";
+import { postMessage as slackPostMessage } from "./slack-client.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 
 async function benderChat(
@@ -310,6 +311,12 @@ export class TaskManager {
       }
     } else if (claudeResult.exitCode === 0) {
       session.status = "parked";
+
+      // Post response to Slack if this was a Slack-triggered event
+      if (event.source === "slack" && event.slack_channel && summary) {
+        await slackPostMessage(event.slack_channel, summary, event.slack_thread_ts);
+      }
+
       if (session.agent_session_id) {
         const maxTurnsHit = claudeResult.stderr.includes("max turns");
         if (maxTurnsHit) {
