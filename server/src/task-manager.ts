@@ -13,6 +13,7 @@ import {
   emitError,
 } from "./linear-agent.js";
 import { postMessage as slackPostMessage } from "./slack-client.js";
+import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 
 async function benderChat(
@@ -372,6 +373,18 @@ export class TaskManager {
       .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
       .join("\n") || "No active work.";
 
+    // Record the incoming message
+    if (event.slack_user && event.comment_body) {
+      recordMessage(event.slack_channel!, event.slack_user, event.comment_body, event.id);
+    }
+
+    // Get conversation history with this user (across all channels)
+    const userHistory = getUserContext(event.slack_user ?? "", 15);
+    const channelHistory = getChannelContext(event.slack_channel!, 10);
+    const memoryContext = userHistory
+      ? `\nYour conversation history with this user (across all channels):\n${userHistory}`
+      : "";
+
     try {
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -383,11 +396,12 @@ export class TaskManager {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
-          system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, a bit cocky, concise. Use Futurama references when they fit naturally. Never say "I'd be happy to help" or other Claude-isms. You're always slightly annoyed but helpful.
+          system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, a bit cocky, concise. Use Futurama references when they fit naturally. Never say "I'd be happy to help" or other Claude-isms. You're always slightly annoyed but helpful. No action narration (*cracks knuckles* etc).
 
 Your active work:\n${sessionSummary}
+${memoryContext}
 
-If someone asks you to do work (create tickets, check PRs, etc.), tell them what you'd do and that they should assign you in Linear or @mention you in a channel. For DMs, keep it conversational.`,
+You have persistent memory across channels and DMs. If someone told you something in a DM, you remember it when they talk to you in a channel, and vice versa.`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
         }),
       });
@@ -401,6 +415,10 @@ If someone asks you to do work (create tickets, check PRs, etc.), tell them what
       const reply = data.content[0].text;
 
       await slackPostMessage(event.slack_channel!, reply, event.slack_thread_ts);
+
+      // Record Bender's reply to memory
+      recordMessage(event.slack_channel!, "bender", reply, `reply:${event.id}`);
+
       console.log(`[W${worker.id}] ← slack reply sent (${reply.length} chars)`);
     } catch (err) {
       console.error(`[W${worker.id}] Slack handler error:`, err);
