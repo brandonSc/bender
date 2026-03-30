@@ -199,12 +199,8 @@ export class TaskManager {
         const isWorkRequest = await this.classifySlackMessage(event.comment_body ?? "");
         if (isWorkRequest) {
           console.log(`[W${worker.id}] Slack work request — using full CLI`);
-          // Acknowledge immediately so the user knows we're on it
-          await slackPostMessage(
-            event.slack_channel!,
-            "On it. 🤖",
-            event.slack_thread_ts,
-          );
+          const ack = await benderSpeak(`Acknowledging a work request: "${event.comment_body?.slice(0, 80)}". About to start working on it.`);
+          await slackPostMessage(event.slack_channel!, ack, event.slack_thread_ts);
           await this.handleSlackWork(worker, event);
         } else {
           await this.handleSlackMessage(worker, event);
@@ -510,14 +506,27 @@ export class TaskManager {
 
     tempSession.claude_session_id = savedSessionId;
 
+    const durationSec = Math.round(claudeResult.durationMs / 1000);
     const summary = extractSummary(claudeResult.stdout || claudeResult.stderr);
-    if (summary && event.slack_channel) {
-      await slackPostMessage(event.slack_channel, summary, event.slack_thread_ts);
-      recordMessage(event.slack_channel, "bender", summary, `reply:${event.id}`);
+
+    let reply: string;
+    if (claudeResult.killed) {
+      reply = await benderSpeak(`Hit the time limit after ${durationSec}s working on: "${event.comment_body?.slice(0, 60)}". Work is partially done.${summary ? ` Last status: ${summary}` : ""}`);
+    } else if (claudeResult.exitCode !== 0) {
+      reply = await benderSpeak(`Hit an error (exit ${claudeResult.exitCode}) after ${durationSec}s. ${summary || "Something went wrong."}`);
+    } else if (summary) {
+      reply = summary;
+    } else {
+      reply = await benderSpeak(`Finished working on that after ${durationSec}s. Couldn't extract a clear summary of what happened though.`);
+    }
+
+    if (event.slack_channel) {
+      await slackPostMessage(event.slack_channel, reply, event.slack_thread_ts);
+      recordMessage(event.slack_channel, "bender", reply, `reply:${event.id}`);
     }
 
     console.log(
-      `[W${worker.id}] ← slack work done exit=${claudeResult.exitCode} duration=${Math.round(claudeResult.durationMs / 1000)}s`,
+      `[W${worker.id}] ← slack work done exit=${claudeResult.exitCode} duration=${durationSec}s`,
     );
   }
 
