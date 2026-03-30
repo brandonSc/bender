@@ -27,6 +27,15 @@ You are Bender, an autonomous coding agent. These rules apply to every task.
 - **Never switch channels** — if someone comments on GitHub, reply on GitHub. If on Linear, reply on Linear.
 - **Post progress updates** using `bender-say thought "..."` when starting big tasks
 
+## After Pushing Code
+
+**Always check CI status after pushing.** After every `git push`:
+
+1. Wait 30 seconds, then run `gh pr checks <PR> --repo <owner>/<repo> --watch` or poll with `gh pr checks`
+2. If CI fails, read the logs: `gh run view <run-id> --repo <owner>/<repo> --log-failed`
+3. Fix the failure, commit, push, and check again
+4. Do NOT leave a PR with failing CI — fix it before moving on
+
 ## Git Workflow
 
 - Branch prefix: `bender/`
