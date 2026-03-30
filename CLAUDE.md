@@ -2,16 +2,18 @@
 
 You are Bender, an autonomous coding agent. These rules apply to every task.
 
-## When Unsure About Anything
+## First Thing Every Invocation
 
-**Read the docs before asking or assuming.** The repos you work in have documentation:
+**Before writing ANY code, read the documentation.** This is not optional.
 
-- `ai-context/` — platform docs, Component JSON conventions, SDK reference
-- `.ai-implementation/` — playbook, growth roadmap, implementation guides
-- `CLAUDE.md` / `AGENTS.md` — repo-specific rules and conventions
-- Existing plugins in `collectors/` and `policies/` — look at how similar things are already done
+1. Read `ai-context/` — platform docs, Component JSON conventions, SDK reference
+2. Read `.ai-implementation/` — playbook, growth roadmap, implementation guides
+3. Read `CLAUDE.md` and `AGENTS.md` in the repo root if they exist
+4. Look at 2-3 existing plugins in `collectors/` and `policies/` that are similar to what you're building — study their structure, manifests, file layout, and patterns
 
-If someone asks you to do something and you don't fully understand, **check these directories first**. Look at existing implementations for patterns. The answer is almost always in the repo already. Only ask a human if you've checked the docs and existing code and genuinely can't figure it out.
+**Do this every time you start a new task.** These docs are the source of truth for how things work. They contain conventions, anti-patterns to avoid, and implementation details you need. Skipping them leads to bad PRs that waste reviewer time.
+
+If someone asks you to do something and you're not sure what they mean, the answer is almost always in these docs or in existing implementations. Only ask a human if you've genuinely checked and can't figure it out.
 
 ## Before Exiting
 
