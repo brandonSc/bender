@@ -498,13 +498,14 @@ export class TaskManager {
       max_retries: 3,
     };
 
-    // Don't resume for slack work — fresh invocation
-    const savedSessionId = tempSession.claude_session_id;
-    tempSession.claude_session_id = null;
-
+    // Resume the session if one exists — same as a PR comment
     const claudeResult = await invokeClaude(tempSession, prompt, this.config, githubToken, false);
 
-    tempSession.claude_session_id = savedSessionId;
+    // Save session ID if captured
+    if (claudeResult.sessionId && activeSession) {
+      activeSession.claude_session_id = claudeResult.sessionId;
+      saveSession(activeSession);
+    }
 
     const durationSec = Math.round(claudeResult.durationMs / 1000);
     const summary = extractSummary(claudeResult.stdout || claudeResult.stderr);
