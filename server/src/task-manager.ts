@@ -79,6 +79,8 @@ export class TaskManager {
   private workers: Worker[] = [];
   private config: Config;
   private processing = false;
+  private debounceTimers = new Map<string, NodeJS.Timeout>();
+  private static DEBOUNCE_MS = 10000;
 
   constructor(config: Config) {
     this.config = config;
@@ -93,13 +95,11 @@ export class TaskManager {
   }
 
   /**
-   * Enqueue an event for processing. Events are sorted by priority.
+   * Enqueue an event for processing.
+   * Uses debounce for comment-type events to batch rapid-fire messages.
+   * High-priority events (CI failures) skip debounce.
    */
   enqueue(event: TaskEvent): void {
-    this.queue.push({ event, received_at: Date.now() });
-    // Sort by priority (lower number = higher priority)
-    this.queue.sort((a, b) => a.event.priority - b.event.priority);
-
     console.log(
       `[queue] +${event.type} (pri=${event.priority}) from ${event.source}` +
         (event.pr_number ? ` PR#${event.pr_number}` : "") +
@@ -107,6 +107,40 @@ export class TaskManager {
         ` | queue=${this.queue.length} workers=${this.busyCount()}/${this.workers.length}`,
     );
 
+    // High-priority events skip debounce
+    if (event.priority <= 2) {
+      this.addToQueue(event);
+      return;
+    }
+
+    // Debounce comment-type events per ticket — wait for rapid-fire messages to settle
+    const ticketKey = event.ticket_id ?? (event.pr_number ? `pr:${event.pr_number}` : event.id);
+    const existing = this.debounceTimers.get(ticketKey);
+    if (existing) {
+      clearTimeout(existing);
+      // Merge: keep the latest event (most recent comment), drop the older queued one
+      const idx = this.queue.findIndex(
+        (q) => (q.event.ticket_id === event.ticket_id) ||
+          (q.event.pr_number && q.event.pr_number === event.pr_number),
+      );
+      if (idx >= 0) {
+        console.log(`[queue] Merging with queued event for ${ticketKey}`);
+        this.queue.splice(idx, 1);
+      }
+    }
+
+    this.debounceTimers.set(
+      ticketKey,
+      setTimeout(() => {
+        this.debounceTimers.delete(ticketKey);
+        this.addToQueue(event);
+      }, TaskManager.DEBOUNCE_MS),
+    );
+  }
+
+  private addToQueue(event: TaskEvent): void {
+    this.queue.push({ event, received_at: Date.now() });
+    this.queue.sort((a, b) => a.event.priority - b.event.priority);
     this.processNext();
   }
 

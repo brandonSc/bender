@@ -39,6 +39,7 @@ export async function invokeClaude(
 
   args.push("--dangerously-skip-permissions");
   args.push("--effort", "max");
+  args.push("--output-format", "json");
   if (config.claude.max_turns > 0) {
     args.push("--max-turns", config.claude.max_turns.toString());
   }
@@ -146,15 +147,28 @@ export async function invokeClaude(
       appendFileSync(logFile, `Duration: ${durationMs}ms\n`);
       appendFileSync(logFile, `Killed: ${killed}\n`);
 
-      // Try to extract session ID from stderr
-      // Claude Code CLI outputs session info to stderr
-      const sessionIdMatch = stderr.match(/session[:\s]+([a-zA-Z0-9_-]+)/i);
-      const sessionId = sessionIdMatch?.[1] ?? session.claude_session_id;
+      // Parse session_id from JSON output (--output-format json)
+      let sessionId = session.claude_session_id;
+      let responseText = stdout;
+      try {
+        const parsed = JSON.parse(stdout);
+        if (parsed.session_id) {
+          sessionId = parsed.session_id;
+        }
+        // The actual text response is in the "result" or "text" field
+        responseText = parsed.result ?? parsed.text ?? parsed.content ?? stdout;
+      } catch {
+        // stdout wasn't valid JSON — use raw output and try stderr for session ID
+        const sessionIdMatch = stderr.match(/session[:\s]+([a-f0-9-]{36})/i);
+        if (sessionIdMatch) sessionId = sessionIdMatch[1];
+      }
+
+      appendFileSync(logFile, `Session ID: ${sessionId ?? "none"}\n`);
 
       resolvePromise({
         exitCode: code ?? 1,
         sessionId,
-        stdout,
+        stdout: responseText,
         stderr,
         durationMs,
         killed,
