@@ -384,6 +384,13 @@ export class TaskManager {
   }
 
   private async classifySlackMessage(text: string): Promise<boolean> {
+    // Quick keyword check first — skip the API call for obvious cases
+    const workKeywords = /\b(create|make|build|write|fix|push|deploy|run|test|check|update|add|remove|delete|implement|clone|commit|merge|open|close|install|setup|configure)\b/i;
+    if (workKeywords.test(text)) {
+      console.log(`[classify] Keyword match → work`);
+      return true;
+    }
+
     try {
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -397,13 +404,15 @@ export class TaskManager {
           max_tokens: 10,
           messages: [{
             role: "user",
-            content: `Is this a work request (asking an agent to do something: write code, create repos, run tests, create tickets, check PRs, fix bugs, deploy, etc.) or just chat/question? Reply ONLY "work" or "chat".\n\nMessage: "${text}"`,
+            content: `Is this message asking a coding agent to DO something (work) or just chatting/asking a question (chat)? If there's any imperative ("go do X", "can you X", "please X"), that's work. Reply ONLY "work" or "chat".\n\nMessage: "${text}"`,
           }],
         }),
       });
       if (!resp.ok) return false;
       const data = (await resp.json()) as { content: Array<{ text: string }> };
-      return data.content[0].text.trim().toLowerCase().includes("work");
+      const result = data.content[0].text.trim().toLowerCase();
+      console.log(`[classify] Haiku says: ${result}`);
+      return result.includes("work");
     } catch {
       return false;
     }
