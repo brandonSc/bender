@@ -133,7 +133,8 @@ export function buildResumedPrompt(
     parts.push(
       "",
       "## Instructions",
-      "Respond to the human's message above. Reply using `bender-say` to keep the conversation in Linear.",
+      "Respond to the human's message above. Reply using `bender-say response \"your reply\"` ONCE.",
+      "Do NOT reply more than once. One bender-say call, then you're done.",
     );
   } else if (event.comment_body && event.source === "slack") {
     parts.push(
