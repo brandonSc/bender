@@ -386,11 +386,14 @@ export class TaskManager {
   }
 
   private async classifySlackMessage(text: string): Promise<boolean> {
-    // Quick keyword check first — skip the API call for obvious cases
-    const workKeywords = /\b(create|make|build|write|fix|push|deploy|run|test|check|update|add|remove|delete|implement|clone|commit|merge|open|close|install|setup|configure)\b/i;
-    if (workKeywords.test(text)) {
-      console.log(`[classify] Keyword match → work`);
-      return true;
+    // Skip keyword matching for questions (starts with what/how/can/is/are/do/does/where/hey/whats)
+    const isQuestion = /^(what|how|can|is|are|do|does|where|hey|whats|what's|hows|how's|tell me|give me|show me)/i.test(text.trim());
+    if (!isQuestion) {
+      const workKeywords = /\b(create|make|build|write|fix|push|deploy|run|test|update|add|remove|delete|implement|clone|commit|merge|open|close|install|setup|configure)\b/i;
+      if (workKeywords.test(text)) {
+        console.log(`[classify] Keyword match → work`);
+        return true;
+      }
     }
 
     try {
