@@ -232,6 +232,7 @@ app.post("/webhooks/linear", (req, res) => {
 // --- Slack webhook ---
 
 let slackBotUserId = "";
+const recentSlackEvents = new Set<string>();
 
 app.post("/webhooks/slack", async (req, res) => {
   const rawBody = (req as unknown as Record<string, unknown>).rawBody as string;
@@ -261,7 +262,12 @@ app.post("/webhooks/slack", async (req, res) => {
   const event = parseSlackEvent(req.body, slackBotUserId);
   if (!event) return;
 
+  // Deduplicate: Slack sends both app_mention AND message for @mentions
   const slackEvent = req.body.event as Record<string, unknown>;
+  const eventTs = slackEvent?.ts as string ?? "";
+  if (recentSlackEvents.has(eventTs)) return;
+  recentSlackEvents.add(eventTs);
+  setTimeout(() => recentSlackEvents.delete(eventTs), 30000);
   const isDirectMention = slackEvent?.type === "app_mention";
   const isDM = (slackEvent?.channel_type as string) === "im";
   const threadTs = (slackEvent?.thread_ts as string) ?? (slackEvent?.ts as string);
