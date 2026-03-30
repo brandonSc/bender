@@ -1,12 +1,12 @@
-import { getLinearToken } from "./linear-auth.js";
+import { getLinearToken, refreshLinearToken } from "./linear-auth.js";
 
 const LINEAR_API = "https://api.linear.app/graphql";
 
 async function query(gql: string, variables?: Record<string, unknown>): Promise<unknown> {
-  const token = getLinearToken();
+  let token = getLinearToken();
   if (!token) throw new Error("Linear not authorized — visit /auth/linear to connect");
 
-  const response = await fetch(LINEAR_API, {
+  let response = await fetch(LINEAR_API, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -14,6 +14,24 @@ async function query(gql: string, variables?: Record<string, unknown>): Promise<
     },
     body: JSON.stringify({ query: gql, variables }),
   });
+
+  // Auto-refresh on 401
+  if (response.status === 401) {
+    const clientId = process.env.LINEAR_CLIENT_ID ?? "";
+    const clientSecret = process.env.LINEAR_CLIENT_SECRET ?? "";
+    const newToken = await refreshLinearToken(clientId, clientSecret);
+    if (newToken) {
+      token = newToken;
+      response = await fetch(LINEAR_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token,
+        },
+        body: JSON.stringify({ query: gql, variables }),
+      });
+    }
+  }
 
   if (!response.ok) {
     const text = await response.text();
