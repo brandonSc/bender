@@ -24,9 +24,13 @@ export function routeEvent(event: TaskEvent): RouteResult | null {
   if (event.type === "new_ticket" && event.ticket_id) {
     const existing = findSessionForEvent(event);
     if (existing) {
-      // Already have a session for this ticket — resume it
+      // Already have a session for this ticket — resume, don't duplicate
       existing.last_event_id = event.id;
       existing.last_activity_at = event.timestamp;
+      if (event.agent_session_id) {
+        existing.agent_session_id = event.agent_session_id;
+      }
+      existing.status = "active";
       saveSession(existing);
       return {
         action: "invoke",

@@ -89,13 +89,23 @@ export function buildResumedPrompt(
   }
 
   parts.push("", "## Current Task State");
+  parts.push(`- Ticket: ${session.ticket_id} — ${session.ticket_title}`);
   parts.push(`- Phase: ${session.phase}`);
   parts.push(`- Status: ${session.status}`);
-  parts.push(`- PR: #${session.pr_number ?? "none"}`);
+  parts.push(`- PR: ${session.pr_number ? `#${session.pr_number}` : "none"}`);
+  parts.push(`- Branch: ${session.branch}`);
   parts.push(`- CI: ${session.ci_status}`);
 
   if (session.blocked) {
     parts.push(`- Blocked: ${session.blocked.reason}`);
+  }
+
+  if (session.pr_number) {
+    parts.push(
+      "",
+      `**You already have PR #${session.pr_number} open for this ticket.** Do NOT start over or create a new PR.`,
+      "Check the PR state and continue from where you left off.",
+    );
   }
 
   if (event.source === "github" && event.pr_number) {
