@@ -47,11 +47,16 @@ export async function invokeClaude(
   const reposDir = resolve(homedir(), "repos");
   mkdirSync(reposDir, { recursive: true });
 
-  // Use worktree path if it exists, otherwise fall back to ~/repos.
-  // Claude will clone/create worktrees as needed.
-  const cwd = existsSync(session.worktree_path)
-    ? session.worktree_path
-    : reposDir;
+  // Pick the best CWD: worktree > cloned repo > ~/repos
+  const lunarLibDir = resolve(reposDir, "lunar-lib");
+  let cwd: string;
+  if (existsSync(session.worktree_path)) {
+    cwd = session.worktree_path;
+  } else if (existsSync(lunarLibDir)) {
+    cwd = lunarLibDir;
+  } else {
+    cwd = reposDir;
+  }
   const startTime = Date.now();
 
   // Set up logging
