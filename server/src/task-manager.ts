@@ -268,8 +268,14 @@ export class TaskManager {
       prompt = buildResumedPrompt(event, session);
     }
 
-    // Invoke Claude
-    const claudeResult = await invokeClaude(session, prompt, this.config, githubToken);
+    // Use Sonnet for chat replies, Opus max for real work
+    const isChat = event.type === "agent_prompt"
+      || (event.type === "reviewer_comment" && event.source === "linear");
+    if (isChat) {
+      console.log(`[W${worker.id}] Light mode (Sonnet) for chat reply`);
+    }
+
+    const claudeResult = await invokeClaude(session, prompt, this.config, githubToken, isChat);
 
     const durationSec = Math.round(claudeResult.durationMs / 1000);
     console.log(

@@ -26,17 +26,21 @@ export async function invokeClaude(
   prompt: string,
   config: Config,
   githubToken?: string,
+  lightMode?: boolean,
 ): Promise<ClaudeResult> {
   const args: string[] = [];
   const isResume = !!session.claude_session_id;
 
-  args.push("--model", config.claude.model);
+  const model = lightMode ? "claude-sonnet-4-20250514" : config.claude.model;
+  args.push("--model", model);
   if (isResume) {
     args.push("--resume", session.claude_session_id!);
   }
 
   args.push("--dangerously-skip-permissions");
-  args.push("--effort", "max");
+  if (!lightMode) {
+    args.push("--effort", "max");
+  }
   args.push("--output-format", "json");
   if (config.claude.max_turns > 0) {
     args.push("--max-turns", config.claude.max_turns.toString());
