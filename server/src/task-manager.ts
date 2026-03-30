@@ -250,22 +250,7 @@ export class TaskManager {
       console.warn(`[W${worker.id}] Failed to get GitHub token:`, err);
     }
 
-    // Fast path: conversational replies via Haiku (no CLI needed)
-    if (
-      event.type === "agent_prompt" &&
-      event.comment_body &&
-      session.agent_session_id
-    ) {
-      console.log(`[W${worker.id}] Fast path: chat reply for ${session.ticket_id}`);
-      const reply = await benderChat(event.comment_body, session);
-      if (reply) {
-        await emitResponse(session.agent_session_id, reply);
-        saveSession(session);
-        return;
-      }
-      // Fall through to full CLI if benderChat fails
-    }
-
+    // All messages go through the full CLI so Claude has tool access and session memory.
     // Notify Linear that we're working
     if (session.agent_session_id) {
       const situation = isNewSession
@@ -295,8 +280,13 @@ export class TaskManager {
     );
 
     // Update session with results
-    if (claudeResult.sessionId && !session.claude_session_id) {
+    if (claudeResult.sessionId) {
+      if (!session.claude_session_id) {
+        console.log(`[W${worker.id}] Captured session ID: ${claudeResult.sessionId}`);
+      }
       session.claude_session_id = claudeResult.sessionId;
+    } else {
+      console.warn(`[W${worker.id}] No session ID captured from Claude output`);
     }
 
     // Extract a useful summary from Claude's output (last meaningful lines)

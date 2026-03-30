@@ -28,13 +28,11 @@ export async function invokeClaude(
   githubToken?: string,
 ): Promise<ClaudeResult> {
   const args: string[] = [];
+  const isResume = !!session.claude_session_id;
 
-  if (session.claude_session_id) {
-    // Resume existing session
-    args.push("--resume", session.claude_session_id);
-  } else {
-    // New session
-    args.push("--model", config.claude.model);
+  args.push("--model", config.claude.model);
+  if (isResume) {
+    args.push("--resume", session.claude_session_id!);
   }
 
   args.push("--dangerously-skip-permissions");
@@ -71,7 +69,7 @@ export async function invokeClaude(
     `${new Date().toISOString().split("T")[0]}-${session.ticket_id}-${String(invocationCount).padStart(3, "0")}.log`,
   );
 
-  appendFileSync(logFile, `=== Claude Invocation ===\n`);
+  appendFileSync(logFile, `=== Claude Invocation (${isResume ? "RESUME " + session.claude_session_id : "NEW"}) ===\n`);
   appendFileSync(logFile, `Time: ${new Date().toISOString()}\n`);
   appendFileSync(logFile, `Ticket: ${session.ticket_id}\n`);
   appendFileSync(logFile, `Session: ${session.claude_session_id ?? "new"}\n`);
