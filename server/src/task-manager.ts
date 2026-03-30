@@ -250,13 +250,11 @@ export class TaskManager {
       console.warn(`[W${worker.id}] Failed to get GitHub token:`, err);
     }
 
-    // All messages go through the full CLI so Claude has tool access and session memory.
-    // Notify Linear that we're working
-    if (session.agent_session_id) {
-      const situation = isNewSession
-        ? `Starting work on ticket ${session.ticket_id}: "${session.ticket_title}"`
-        : `Resuming work on ${session.ticket_id} because of ${event.type}${event.comment_author ? ` from ${event.comment_author}` : ""}`;
-      const msg = await benderSpeak(situation);
+    // Only post a thought for new tickets, not every resumed message
+    if (session.agent_session_id && isNewSession) {
+      const msg = await benderSpeak(
+        `Starting work on ticket ${session.ticket_id}: "${session.ticket_title}"`,
+      );
       await emitThought(session.agent_session_id, msg);
     }
 
@@ -313,10 +311,9 @@ export class TaskManager {
             `Ran out of tool turns on ${session.ticket_id} after ${durationSec}s. Work is in progress but couldn't finish. Will continue on next event.`,
           );
           await emitResponse(session.agent_session_id, msg);
-        } else if (summary) {
-          // Claude's output is already in Bender voice — post it directly
-          await emitResponse(session.agent_session_id, summary);
         }
+        // Normal completion: Claude already communicated via bender-say or
+        // PR comments during its run. Don't double-post the summary.
       }
     } else {
       session.retry_count++;
