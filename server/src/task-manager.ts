@@ -425,11 +425,12 @@ You have two modes:
 1. CHAT — answering questions, status updates, banter. Just reply directly.
 2. WORK — someone is asking you to actually go do something (create repos, fix code, run tests, etc.)
 
-If this is a WORK request, your reply MUST start with exactly "WORK:" followed by a natural acknowledgment (like "Yeah, let me go handle that" or "Fine, I'll set that up"). The system will then dispatch the full work to your code execution engine.
+Reply in JSON format: {"action": "chat" or "work", "reply": "your natural reply here"}
 
-If this is CHAT, just reply normally. Don't start with "WORK:".
+If it's WORK (someone asking you to go do something — create repos, fix code, run tests, etc.), acknowledge naturally in the reply. The system will dispatch the actual work.
+If it's CHAT (questions, status checks, banter), just answer in the reply.
 
-Be smart about this — "what's your status?" is chat. "Go create a repo" is work. "Can you check if CI passed?" could be either — use your judgment. When in doubt, it's chat.`,
+"What's your status?" → chat. "Go create a repo" → work. "Can you check CI?" → could be either, use judgment. When in doubt, chat.`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
         }),
       });
@@ -440,10 +441,21 @@ Be smart about this — "what's your status?" is chat. "Go create a repo" is wor
       }
 
       const data = (await resp.json()) as { content: Array<{ text: string }> };
-      const reply = data.content[0].text;
+      const rawReply = data.content[0].text;
 
-      const isWork = reply.startsWith("WORK:");
-      const cleanReply = isWork ? reply.slice(5).trim() : reply;
+      // Parse JSON response, fallback to treating as plain chat
+      let isWork = false;
+      let cleanReply = rawReply;
+      try {
+        const jsonStr = rawReply.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+        const parsed = JSON.parse(jsonStr) as { action: string; reply: string };
+        isWork = parsed.action === "work";
+        cleanReply = parsed.reply;
+      } catch {
+        // Not JSON — treat as plain chat reply
+        isWork = false;
+        cleanReply = rawReply;
+      }
 
       // Post the reply immediately
       await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
