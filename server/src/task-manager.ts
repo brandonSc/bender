@@ -391,6 +391,12 @@ export class TaskManager {
       .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
       .join("\n") || "No active work.";
 
+    // Check if any workers are currently busy (running Opus work)
+    const busyWorkers = this.workers.filter((w) => w.busy);
+    const workerStatus = busyWorkers.length > 0
+      ? `Currently running: ${busyWorkers.map((w) => `Worker ${w.id} on ${w.current_ticket}`).join(", ")}`
+      : "All workers idle — not currently running any code.";
+
     const userHistory = getUserContext(event.slack_user ?? "", 15);
     const channelHistory = getChannelContext(event.slack_channel!, 10);
 
@@ -410,6 +416,8 @@ export class TaskManager {
 
 Your active work:
 ${sessionSummary}
+
+Runtime status: ${workerStatus}
 
 ${userHistory ? `Conversation history with this user:\n${userHistory}` : ""}
 
