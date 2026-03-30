@@ -190,21 +190,13 @@ export class TaskManager {
    * Dispatch an event to a worker — route it and invoke Claude if needed.
    */
   private async dispatch(worker: Worker, event: TaskEvent): Promise<void> {
-    // Slack messages — classify as chat vs work request
+    // Slack messages — single smart call that decides and acts
     if (event.source === "slack" && event.slack_channel) {
       worker.busy = true;
       worker.current_ticket = `slack:${event.slack_channel}`;
       console.log(`[W${worker.id}] → slack ${event.slack_channel} "${event.comment_body?.slice(0, 50)}"`);
       try {
-        const isWorkRequest = await this.classifySlackMessage(event.comment_body ?? "");
-        if (isWorkRequest) {
-          console.log(`[W${worker.id}] Slack work request — using full CLI`);
-          const ack = await benderSpeak(`Someone just asked me to do some work. I'm about to go do it.`);
-          await slackPostMessage(event.slack_channel!, ack, event.slack_thread_ts);
-          await this.handleSlackWork(worker, event);
-        } else {
-          await this.handleSlackMessage(worker, event);
-        }
+        await this.handleSlack(worker, event);
       } catch (err) {
         console.error(`[W${worker.id}] slack error:`, err);
       } finally {
@@ -385,17 +377,24 @@ export class TaskManager {
     saveSession(session);
   }
 
-  private async classifySlackMessage(text: string): Promise<boolean> {
-    // Skip keyword matching for questions (starts with what/how/can/is/are/do/does/where/hey/whats)
-    const isQuestion = /^(what|how|can|is|are|do|does|where|hey|whats|what's|hows|how's|tell me|give me|show me)/i.test(text.trim());
-    if (!isQuestion) {
-      const workKeywords = /\b(create|make|build|write|fix|push|deploy|run|test|update|add|remove|delete|implement|clone|commit|merge|open|close|install|setup|configure)\b/i;
-      if (workKeywords.test(text)) {
-        console.log(`[classify] Keyword match → work`);
-        return true;
-      }
+  private async handleSlack(
+    worker: Worker,
+    event: TaskEvent,
+  ): Promise<void> {
+    // Record incoming message
+    if (event.slack_user && event.comment_body) {
+      recordMessage(event.slack_channel!, event.slack_user, event.comment_body, event.id);
     }
 
+    const sessions = listActiveSessions();
+    const sessionSummary = sessions
+      .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
+      .join("\n") || "No active work.";
+
+    const userHistory = getUserContext(event.slack_user ?? "", 15);
+    const channelHistory = getChannelContext(event.slack_channel!, 10);
+
+    // One Sonnet call: read the message, decide what to do, respond
     try {
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -405,21 +404,51 @@ export class TaskManager {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-haiku-4-20250514",
-          max_tokens: 10,
-          messages: [{
-            role: "user",
-            content: `Is this message asking a coding agent to DO something (work) or just chatting/asking a question (chat)? If there's any imperative ("go do X", "can you X", "please X"), that's work. Reply ONLY "work" or "chat".\n\nMessage: "${text}"`,
-          }],
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, concise, a bit cocky. No Claude-isms. No action narration.
+
+Your active work:
+${sessionSummary}
+
+${userHistory ? `Conversation history with this user:\n${userHistory}` : ""}
+
+You have two modes:
+1. CHAT — answering questions, status updates, banter. Just reply directly.
+2. WORK — someone is asking you to actually go do something (create repos, fix code, run tests, etc.)
+
+If this is a WORK request, your reply MUST start with exactly "WORK:" followed by a natural acknowledgment (like "Yeah, let me go handle that" or "Fine, I'll set that up"). The system will then dispatch the full work to your code execution engine.
+
+If this is CHAT, just reply normally. Don't start with "WORK:".
+
+Be smart about this — "what's your status?" is chat. "Go create a repo" is work. "Can you check if CI passed?" could be either — use your judgment. When in doubt, it's chat.`,
+          messages: [{ role: "user", content: event.comment_body ?? "hey" }],
         }),
       });
-      if (!resp.ok) return false;
+
+      if (!resp.ok) {
+        console.error(`[W${worker.id}] Slack Sonnet error: ${resp.status}`);
+        return;
+      }
+
       const data = (await resp.json()) as { content: Array<{ text: string }> };
-      const result = data.content[0].text.trim().toLowerCase();
-      console.log(`[classify] Haiku says: ${result}`);
-      return result.includes("work");
-    } catch {
-      return false;
+      const reply = data.content[0].text;
+
+      const isWork = reply.startsWith("WORK:");
+      const cleanReply = isWork ? reply.slice(5).trim() : reply;
+
+      // Post the reply immediately
+      await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+      recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+      console.log(`[W${worker.id}] ← slack ${isWork ? "ack+work" : "chat"} (${cleanReply.length} chars)`);
+
+      // If work, dispatch the full CLI
+      if (isWork) {
+        console.log(`[W${worker.id}] Dispatching full CLI for Slack work request`);
+        await this.handleSlackWork(worker, event);
+      }
+    } catch (err) {
+      console.error(`[W${worker.id}] Slack handler error:`, err);
     }
   }
 
@@ -534,66 +563,7 @@ export class TaskManager {
     );
   }
 
-  private async handleSlackMessage(
-    worker: Worker,
-    event: TaskEvent,
-  ): Promise<void> {
-    const sessions = listActiveSessions();
-    const sessionSummary = sessions
-      .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
-      .join("\n") || "No active work.";
-
-    // Record the incoming message
-    if (event.slack_user && event.comment_body) {
-      recordMessage(event.slack_channel!, event.slack_user, event.comment_body, event.id);
-    }
-
-    // Get conversation history with this user (across all channels)
-    const userHistory = getUserContext(event.slack_user ?? "", 15);
-    const channelHistory = getChannelContext(event.slack_channel!, 10);
-    const memoryContext = userHistory
-      ? `\nYour conversation history with this user (across all channels):\n${userHistory}`
-      : "";
-
-    try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, a bit cocky, concise. Use Futurama references when they fit naturally. Never say "I'd be happy to help" or other Claude-isms. You're always slightly annoyed but helpful. No action narration (*cracks knuckles* etc).
-
-Your active work:\n${sessionSummary}
-${memoryContext}
-
-You have persistent memory across channels and DMs. If someone told you something in a DM, you remember it when they talk to you in a channel, and vice versa.`,
-          messages: [{ role: "user", content: event.comment_body ?? "hey" }],
-        }),
-      });
-
-      if (!resp.ok) {
-        console.error(`[W${worker.id}] Slack Sonnet API error: ${resp.status}`);
-        return;
-      }
-
-      const data = (await resp.json()) as { content: Array<{ text: string }> };
-      const reply = data.content[0].text;
-
-      await slackPostMessage(event.slack_channel!, reply, event.slack_thread_ts);
-
-      // Record Bender's reply to memory
-      recordMessage(event.slack_channel!, "bender", reply, `reply:${event.id}`);
-
-      console.log(`[W${worker.id}] ← slack reply sent (${reply.length} chars)`);
-    } catch (err) {
-      console.error(`[W${worker.id}] Slack handler error:`, err);
-    }
-  }
+  // handleSlackMessage removed — replaced by handleSlack
 
   /**
    * Get status summary for the status endpoint.
