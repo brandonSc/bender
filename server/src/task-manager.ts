@@ -79,7 +79,7 @@ export class TaskManager {
   private workers: Worker[] = [];
   private config: Config;
   private processing = false;
-  private debounceTimers = new Map<string, NodeJS.Timeout>();
+  private debounceTimers = new Map<string, { event: TaskEvent; timer: NodeJS.Timeout }>();
   private static DEBOUNCE_MS = 10000;
 
   constructor(config: Config) {
@@ -113,29 +113,33 @@ export class TaskManager {
       return;
     }
 
-    // Debounce comment-type events per ticket — wait for rapid-fire messages to settle
+    // Debounce comment-type events per ticket — accumulate messages, dispatch after silence
     const ticketKey = event.ticket_id ?? (event.pr_number ? `pr:${event.pr_number}` : event.id);
     const existing = this.debounceTimers.get(ticketKey);
     if (existing) {
-      clearTimeout(existing);
-      // Merge: keep the latest event (most recent comment), drop the older queued one
-      const idx = this.queue.findIndex(
-        (q) => (q.event.ticket_id === event.ticket_id) ||
-          (q.event.pr_number && q.event.pr_number === event.pr_number),
-      );
-      if (idx >= 0) {
-        console.log(`[queue] Merging with queued event for ${ticketKey}`);
-        this.queue.splice(idx, 1);
+      clearTimeout(existing.timer);
+      // Accumulate: append new comment to the pending event's body
+      if (event.comment_body && existing.event.comment_body) {
+        const author = event.comment_author ?? "human";
+        existing.event.comment_body += `\n\n---\n**${author}:** ${event.comment_body}`;
+      } else if (event.comment_body) {
+        existing.event.comment_body = event.comment_body;
       }
+      // Keep higher priority
+      if (event.priority < existing.event.priority) {
+        existing.event.priority = event.priority;
+      }
+      console.log(`[queue] Accumulated message for ${ticketKey} (debounce reset)`);
     }
 
-    this.debounceTimers.set(
-      ticketKey,
-      setTimeout(() => {
+    const pending = existing?.event ?? event;
+    this.debounceTimers.set(ticketKey, {
+      event: pending,
+      timer: setTimeout(() => {
         this.debounceTimers.delete(ticketKey);
-        this.addToQueue(event);
+        this.addToQueue(pending);
       }, TaskManager.DEBOUNCE_MS),
-    );
+    });
   }
 
   private addToQueue(event: TaskEvent): void {
