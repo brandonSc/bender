@@ -199,7 +199,7 @@ export class TaskManager {
         const isWorkRequest = await this.classifySlackMessage(event.comment_body ?? "");
         if (isWorkRequest) {
           console.log(`[W${worker.id}] Slack work request — using full CLI`);
-          const ack = await benderSpeak(`Acknowledging a work request: "${event.comment_body?.slice(0, 80)}". About to start working on it.`);
+          const ack = await benderSpeak(`Someone just asked me to do some work. I'm about to go do it.`);
           await slackPostMessage(event.slack_channel!, ack, event.slack_thread_ts);
           await this.handleSlackWork(worker, event);
         } else {
