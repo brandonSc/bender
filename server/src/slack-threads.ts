@@ -1,7 +1,7 @@
 // Track threads where Bender was mentioned — reply to follow-ups without needing @mention
 
 const activeThreads = new Map<string, number>();
-const THREAD_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+const THREAD_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Mark a thread as active (Bender was mentioned in it).
