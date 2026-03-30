@@ -290,11 +290,21 @@ export class TaskManager {
     // Use Sonnet for chat replies, Opus max for real work
     const isChat = event.type === "agent_prompt"
       || (event.type === "reviewer_comment" && event.source === "linear");
+
+    // For chat, don't resume the session — old context causes stale responses.
+    // Temporarily clear session ID so invokeClaude starts fresh.
+    const savedSessionId = session.claude_session_id;
     if (isChat) {
-      console.log(`[W${worker.id}] Light mode (Sonnet) for chat reply`);
+      console.log(`[W${worker.id}] Light mode (Sonnet, fresh) for chat reply`);
+      session.claude_session_id = null;
     }
 
     const claudeResult = await invokeClaude(session, prompt, this.config, githubToken, isChat);
+
+    // Restore session ID (don't lose it for future code work)
+    if (isChat && savedSessionId) {
+      session.claude_session_id = savedSessionId;
+    }
 
     const durationSec = Math.round(claudeResult.durationMs / 1000);
     console.log(
