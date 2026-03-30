@@ -237,11 +237,13 @@ app.post("/webhooks/slack", async (req, res) => {
   const timestamp = req.headers["x-slack-request-timestamp"] as string | undefined;
   const signature = req.headers["x-slack-signature"] as string | undefined;
 
+  console.log(`[slack] Received: ts=${timestamp} sig=${signature?.slice(0, 20)}... body_len=${rawBody?.length}`);
+
   if (
     secrets.SLACK_SIGNING_SECRET &&
     !verifySlackSignature(rawBody, timestamp, signature, secrets.SLACK_SIGNING_SECRET)
   ) {
-    console.warn("[slack] Invalid signature — rejecting");
+    console.warn(`[slack] Invalid signature — rejecting (rawBody type: ${typeof rawBody}, has content: ${!!rawBody})`);
     res.status(401).json({ error: "Invalid signature" });
     return;
   }
