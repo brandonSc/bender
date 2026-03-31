@@ -553,9 +553,16 @@ If runtime status shows work in progress, report it accurately.`,
       recordMessage(event.slack_channel!, event.slack_user, event.comment_body, event.id);
     }
 
-    // Find active session to work in, or use a generic work context
+    // Find the most relevant active session, or create a new one for this work
     const sessions = listActiveSessions();
-    const activeSession = sessions.length > 0 ? sessions[0] : null;
+    // If work is in an existing thread tied to a session, use that session
+    let activeSession: Session | null = null;
+    if (event.slack_channel && event.slack_thread_ts) {
+      activeSession = sessions.find(
+        (s) => s.slack_channel === event.slack_channel && s.slack_thread_ts === event.slack_thread_ts,
+      ) ?? null;
+    }
+    // Otherwise don't assume — the work will create its own session if it opens a PR
 
     // Get GitHub token
     let githubToken: string | undefined;
