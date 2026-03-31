@@ -103,8 +103,9 @@ export function buildResumedPrompt(
   if (session.pr_number) {
     parts.push(
       "",
-      `**You already have PR #${session.pr_number} open for this ticket.** Do NOT start over or create a new PR.`,
-      "Check the PR state and continue from where you left off.",
+      `**FOCUS: This event is for PR #${session.pr_number} on ${session.repo || "unknown repo"}.** Do NOT work on any other PR.`,
+      `Do NOT start over or create a new PR. Only address comments and make changes on THIS PR.`,
+      `If you need to run gh commands, use: --repo ${session.repo}`,
     );
   }
 
