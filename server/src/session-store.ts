@@ -138,64 +138,31 @@ export function findSessionForEvent(event: {
   if (event.pr_number) {
     const sessions = listActiveSessions();
 
-    // Exact PR match on primary
+    // Exact PR match on primary — require repo match when available
     const exact = sessions.find(
       (s) =>
         s.pr_number === event.pr_number &&
-        (!event.repo || s.repo === event.repo),
+        s.repo === event.repo,
     );
     if (exact) return exact;
 
-    // Match on additional_prs
+    // Match on additional_prs — also require exact repo match
     const byAdditional = sessions.find((s) =>
       s.additional_prs?.some(
         (ap) =>
           ap.pr_number === event.pr_number &&
-          (!event.repo || ap.repo === event.repo),
+          ap.repo === event.repo,
       ),
     );
     if (byAdditional) return byAdditional;
 
-    // If session has no pr_number yet, match by repo and backfill
-    if (event.repo) {
-      const byRepo = sessions.find(
-        (s) => !s.pr_number && (s.repo === event.repo || !s.repo),
-      );
-      if (byRepo) {
-        byRepo.pr_number = event.pr_number;
-        if (event.repo) byRepo.repo = event.repo;
-        saveSession(byRepo);
-        console.log(
-          `[session] Backfilled PR#${event.pr_number} on ${byRepo.ticket_id}`,
-        );
-        return byRepo;
-      }
-    }
-
-    // Fallback: only link if the PR was opened by Bender (check raw event payload)
-    const rawPayload = (event as { raw?: Record<string, unknown> }).raw as Record<string, unknown> | undefined;
-    const prUser = (rawPayload?.pull_request as Record<string, unknown>)?.user as Record<string, unknown> | undefined;
-    const prAuthor = (prUser?.login as string) ?? "";
-    const isBenderPR = prAuthor === "me-bender[bot]";
-
-    if (isBenderPR && sessions.length === 1) {
-      const solo = sessions[0];
-      if (!solo.additional_prs) solo.additional_prs = [];
-      const alreadyTracked = solo.additional_prs.some(
-        (ap) => ap.pr_number === event.pr_number && ap.repo === (event.repo ?? ""),
-      );
-      if (!alreadyTracked) {
-        solo.additional_prs.push({
-          repo: event.repo ?? "",
-          pr_number: event.pr_number,
-        });
-        saveSession(solo);
-        console.log(
-          `[session] Fallback: linked Bender's PR#${event.pr_number} to ${solo.ticket_id} via additional_prs`,
-        );
-      }
-      return solo;
-    }
+    // No heuristic fallbacks — PRs must be explicitly registered via bender-track-pr
+    // or already linked via pr_number/additional_prs on the session.
+    console.log(
+      `[session] No session found for PR#${event.pr_number}` +
+        (event.repo ? ` on ${event.repo}` : "") +
+        ` — ignoring (${sessions.length} active sessions)`,
+    );
   }
 
   return null;
