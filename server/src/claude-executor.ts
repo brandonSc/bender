@@ -91,6 +91,8 @@ export async function invokeClaude(
         ...process.env,
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
         ...(githubToken ? { GH_TOKEN: githubToken, GITHUB_TOKEN: githubToken } : {}),
+        BENDER_TICKET_ID: session.ticket_id,
+        BENDER_SESSION_DIR: resolve(getBenderDir(), "sessions"),
         ...(session.agent_session_id ? {
           BENDER_AGENT_SESSION_ID: session.agent_session_id,
           BENDER_LINEAR_TOKEN: getLinearToken() ?? "",

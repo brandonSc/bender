@@ -286,7 +286,7 @@ app.post("/webhooks/slack", async (req, res) => {
     );
     taskManager.enqueue(event);
   } else {
-    // Lurk mode — evaluate whether to chime in
+    // Lurk mode — evaluate whether to chime in (conservative, high threshold)
     if (!secrets.SLACK_BOT_TOKEN) return;
 
     const decision = await evaluateLurk(

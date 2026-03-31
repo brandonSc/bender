@@ -15,7 +15,7 @@ import {
   emitResponse,
   emitError,
 } from "./linear-agent.js";
-import { postMessage as slackPostMessage } from "./slack-client.js";
+import { postMessage as slackPostMessage, getThreadMessages, getChannelHistory } from "./slack-client.js";
 import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
@@ -366,6 +366,30 @@ export class TaskManager {
       console.warn(`[W${worker.id}] No session ID captured from Claude output`);
     }
 
+    // Extract PRs from Claude's output and update session
+    const prMatches = (claudeResult.stdout + claudeResult.stderr)
+      .matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
+    for (const match of prMatches) {
+      const repo = match[1];
+      const prNum = parseInt(match[2], 10);
+      const alreadyTracked =
+        (session.pr_number === prNum && session.repo === repo) ||
+        session.additional_prs?.some((ap) => ap.pr_number === prNum && ap.repo === repo);
+      if (!alreadyTracked) {
+        if (!session.pr_number) {
+          session.pr_number = prNum;
+          session.repo = repo;
+        } else {
+          if (!session.additional_prs) session.additional_prs = [];
+          session.additional_prs.push({ repo, pr_number: prNum });
+        }
+        if (session.phase === "starting") {
+          session.phase = "impl_review";
+        }
+        console.log(`[W${worker.id}] Detected PR: ${repo}#${prNum} on ${session.ticket_id} (phase=${session.phase})`);
+      }
+    }
+
     // Extract a useful summary from Claude's output (last meaningful lines)
     const summary = extractSummary(claudeResult.stdout || claudeResult.stderr);
 
@@ -457,6 +481,30 @@ export class TaskManager {
       ? `IMPORTANT — Work already in progress on other workers:\n${busyWorkers.map((w) => `  Worker ${w.id}: ${w.current_description ?? w.current_ticket ?? "unknown task"}`).join("\n")}\nIf the user asks for status, tell them work IS running.`
       : "All other workers idle — no background work in progress.";
 
+    // Fetch live conversation context from Slack
+    let conversationContext = "";
+    try {
+      if (event.slack_thread_ts && event.slack_channel) {
+        const threadMsgs = await getThreadMessages(event.slack_channel, event.slack_thread_ts);
+        if (threadMsgs.length > 0) {
+          conversationContext = "Thread history (oldest first):\n" + threadMsgs
+            .map((m) => `<${m.user}>: ${m.text}`)
+            .join("\n");
+        }
+      } else if (event.slack_channel) {
+        const channelMsgs = await getChannelHistory(event.slack_channel, 15);
+        if (channelMsgs.length > 0) {
+          conversationContext = "Recent channel messages:\n" + channelMsgs
+            .reverse()
+            .map((m) => `<${m.user}>: ${m.text}`)
+            .join("\n");
+        }
+      }
+    } catch (err) {
+      console.warn(`[W${worker.id}] Failed to fetch conversation context:`, err);
+    }
+
+    // Supplement with persisted cross-channel history for this user
     const userHistory = getUserContext(event.slack_user ?? "", 15);
 
     // One Sonnet call: classify + respond
@@ -478,7 +526,9 @@ ${sessionSummary}
 
 Runtime status: ${workerStatus}
 
-${userHistory ? `Conversation history with this user:\n${userHistory}` : ""}
+${conversationContext ? `## Conversation Context\n${conversationContext}\n` : ""}
+${userHistory ? `## Previous interactions with this user (across channels):\n${userHistory}\n` : ""}
+Read the conversation context carefully before responding. Reference previous messages when relevant — don't make the user repeat themselves.
 
 You have three modes:
 1. CHAT — answering questions, status updates, banter. Just reply directly.
@@ -543,14 +593,23 @@ If runtime status shows work in progress, report it accurately.`,
         // Post ack and dispatch immediately
         const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
         recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
-        console.log(`[W${worker.id}] ← slack ack+work (${cleanReply.length} chars)`);
         const workThreadTs = event.slack_thread_ts ?? ackTs;
+        if (workThreadTs) {
+          const { trackThread } = await import("./slack-threads.js");
+          trackThread(`${event.slack_channel}:${workThreadTs}`);
+        }
+        console.log(`[W${worker.id}] ← slack ack+work (${cleanReply.length} chars)`);
         event.slack_thread_ts = workThreadTs;
         await this.handleSlackWork(worker, event);
       } else {
-        // Chat — just post the reply
-        await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+        // Chat — just post the reply, and track the thread so we respond to follow-ups
+        const replyTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
         recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+        const chatThreadTs = event.slack_thread_ts ?? replyTs;
+        if (chatThreadTs) {
+          const { trackThread } = await import("./slack-threads.js");
+          trackThread(`${event.slack_channel}:${chatThreadTs}`);
+        }
         console.log(`[W${worker.id}] ← slack chat (${cleanReply.length} chars)`);
       }
     } catch (err) {
@@ -589,6 +648,21 @@ If runtime status shows work in progress, report it accurately.`,
       ? `Active ticket: ${activeSession.ticket_id} "${activeSession.ticket_title}" (PR #${activeSession.pr_number ?? "none"}, branch: ${activeSession.branch})`
       : "No active tickets.";
 
+    // Fetch thread history so Claude has full conversation context
+    let threadContext = "";
+    try {
+      if (event.slack_thread_ts && event.slack_channel) {
+        const threadMsgs = await getThreadMessages(event.slack_channel, event.slack_thread_ts);
+        if (threadMsgs.length > 0) {
+          threadContext = threadMsgs
+            .map((m) => `<${m.user}>: ${m.text}`)
+            .join("\n");
+        }
+      }
+    } catch (err) {
+      console.warn(`[W${worker.id}] Failed to fetch thread context for work:`, err);
+    }
+
     const prompt = [
       identity,
       "",
@@ -597,6 +671,11 @@ If runtime status shows work in progress, report it accurately.`,
       `Channel: ${event.slack_channel}`,
       `Message: ${event.comment_body}`,
       "",
+      ...(threadContext ? [
+        `## Conversation History (this thread)`,
+        threadContext,
+        "",
+      ] : []),
       `## Context`,
       sessionContext,
       "",
@@ -678,9 +757,19 @@ If runtime status shows work in progress, report it accurately.`,
           (activeSession.pr_number === prNum && activeSession.repo === repo) ||
           activeSession.additional_prs.some((ap) => ap.pr_number === prNum && ap.repo === repo);
         if (!alreadyTracked) {
-          activeSession.additional_prs.push({ repo, pr_number: prNum });
+          // First PR becomes the primary, rest go to additional_prs
+          if (!activeSession.pr_number) {
+            activeSession.pr_number = prNum;
+            activeSession.repo = repo;
+          } else {
+            activeSession.additional_prs.push({ repo, pr_number: prNum });
+          }
+          // Advance phase if still in starting
+          if (activeSession.phase === "starting") {
+            activeSession.phase = "impl_review";
+          }
           saveSession(activeSession);
-          console.log(`[W${worker.id}] Tracked new PR: ${repo}#${prNum} on ${activeSession.ticket_id}`);
+          console.log(`[W${worker.id}] Tracked PR: ${repo}#${prNum} on ${activeSession.ticket_id} (phase=${activeSession.phase})`);
         }
       }
     }

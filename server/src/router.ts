@@ -83,6 +83,22 @@ export function routeEvent(event: TaskEvent): RouteResult | null {
     return null;
   }
 
+  // Hard gate: only act on PRs that Bender authored.
+  // Prevents committing to someone else's PR if a session was incorrectly linked.
+  if (event.source === "github" && event.pr_number && event.type !== "informational") {
+    const rawPayload = event.raw as Record<string, unknown> | undefined;
+    const pr =
+      (rawPayload?.pull_request as Record<string, unknown>) ??
+      (rawPayload?.issue as Record<string, unknown>);
+    const prAuthor = (pr?.user as Record<string, unknown>)?.login as string ?? "";
+    if (prAuthor && !prAuthor.includes("bender")) {
+      console.warn(
+        `[router] BLOCKED: PR#${event.pr_number} authored by ${prAuthor} (not Bender) — refusing to act on ${session.ticket_id}`,
+      );
+      return { action: "skip", session, event, isNewSession: false, needsCheckpoint: false };
+    }
+  }
+
   // Update activity timestamp
   session.last_event_id = event.id;
   session.last_activity_at = event.timestamp;

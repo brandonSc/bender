@@ -57,14 +57,16 @@ Is conversation in a thread: ${isInThread}
 Should Bender respond? Reply with ONLY valid JSON:
 {"action":"ignore"|"emoji_react"|"reply", "confidence":0.0-1.0, "emoji":"bender-neat", "reply_in_thread":${isInThread}, "suggested_reply":"..."}
 
-Rules:
-- If someone is going wrong technically and Bender has context → reply (confidence > 0.8)
-- Architecture/bug discussion where Bender's work is relevant → reply
-- Genuinely funny moment → emoji_react with bender-neat or reply with a quip
-- General chit-chat → ignore
-- If conversation is NOT in a thread, reply_in_thread should be false (match the vibe)
-- If ANY doubt → ignore. Better quiet than noisy.
-- confidence must be > 0.8 to act`,
+Rules (strict — Bender was replying too much, so err heavily toward silence):
+- DEFAULT IS IGNORE. Only act if it would be weird NOT to (e.g. someone directly asked Bender a question without @mentioning).
+- Someone mentions "bender" by name asking him something specific → reply, but ONLY if it's clearly directed at him, not just mentioning him in passing.
+- Someone is going wrong technically on something Bender actively worked on (check active work above) → reply. Must be directly relevant to HIS work, not general tech talk.
+- Funny moment, cool achievement, something noteworthy → emoji_react with bender-neat. Reacts are low-noise, use them freely. Do NOT reply with quips — an emoji is enough.
+- General chit-chat, vague mentions, discussions Bender has no direct context on → ignore.
+- If conversation is NOT in a thread, reply_in_thread should be false.
+- When in doubt → ALWAYS ignore. One unnecessary reply is worse than ten missed opportunities.
+- Prefer emoji_react over reply. Emoji reacts are cheap and fun — use them when the vibe is right. Replies should be rare — maybe once or twice a day.
+- confidence must be > 0.8 for emoji_react, > 0.9 for reply`,
         }],
       }),
     });
@@ -78,7 +80,8 @@ Rules:
     const jsonStr = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
     const decision = JSON.parse(jsonStr) as LurkDecision;
 
-    if (decision.confidence < 0.8) {
+    const threshold = decision.action === "emoji_react" ? 0.8 : 0.9;
+    if (decision.confidence < threshold) {
       return { action: "ignore", confidence: decision.confidence, reply_in_thread: false };
     }
 
