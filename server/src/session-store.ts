@@ -172,19 +172,28 @@ export function findSessionForEvent(event: {
       }
     }
 
-    // Fallback: if only one active session exists, assume this PR belongs to it
-    // (Bender usually works one task at a time)
-    if (sessions.length === 1) {
+    // Fallback: only link if the PR was opened by Bender (check raw event payload)
+    const rawPayload = (event as { raw?: Record<string, unknown> }).raw as Record<string, unknown> | undefined;
+    const prUser = (rawPayload?.pull_request as Record<string, unknown>)?.user as Record<string, unknown> | undefined;
+    const prAuthor = (prUser?.login as string) ?? "";
+    const isBenderPR = prAuthor === "me-bender[bot]";
+
+    if (isBenderPR && sessions.length === 1) {
       const solo = sessions[0];
       if (!solo.additional_prs) solo.additional_prs = [];
-      solo.additional_prs.push({
-        repo: event.repo ?? "",
-        pr_number: event.pr_number,
-      });
-      saveSession(solo);
-      console.log(
-        `[session] Fallback: linked PR#${event.pr_number} to ${solo.ticket_id} via additional_prs`,
+      const alreadyTracked = solo.additional_prs.some(
+        (ap) => ap.pr_number === event.pr_number && ap.repo === (event.repo ?? ""),
       );
+      if (!alreadyTracked) {
+        solo.additional_prs.push({
+          repo: event.repo ?? "",
+          pr_number: event.pr_number,
+        });
+        saveSession(solo);
+        console.log(
+          `[session] Fallback: linked Bender's PR#${event.pr_number} to ${solo.ticket_id} via additional_prs`,
+        );
+      }
       return solo;
     }
   }
