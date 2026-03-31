@@ -605,6 +605,11 @@ If runtime status shows work in progress, report it accurately.`,
       `- If you need clarification, ask in the thread and then continue with your best guess. Don't block.`,
       `- If asked to message someone in a specific channel, do it directly.`,
       `- If the user's message contains multiple requests, address all of them.`,
+      ``,
+      `## File Downloads`,
+      `If the message references Slack files (url_private_download), download them with:`,
+      `  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "FILE_URL" -o /tmp/filename`,
+      `Read the downloaded file and use its contents as context for your work.`,
     ].join("\n");
 
     // Use a temporary session-like object for the executor
