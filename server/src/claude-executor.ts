@@ -84,10 +84,17 @@ export async function invokeClaude(
   appendFileSync(logFile, `\n--- Prompt ---\n${prompt}\n\n`);
 
   return new Promise<ClaudeResult>((resolvePromise) => {
+    // Strip SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from child env.
+    // Claude CLI processes must NOT post to Slack directly — the server
+    // handles all Slack messaging to prevent duplicate responses.
+    const childEnv = { ...process.env };
+    delete childEnv.SLACK_BOT_TOKEN;
+    delete childEnv.SLACK_SIGNING_SECRET;
+
     const child = spawn("claude", args, {
       cwd,
       env: {
-        ...process.env,
+        ...childEnv,
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
         ...(githubToken ? { GH_TOKEN: githubToken, GITHUB_TOKEN: githubToken } : {}),
         ...(session.agent_session_id ? {

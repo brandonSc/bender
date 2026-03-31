@@ -151,4 +151,5 @@ export interface Worker {
   id: number;
   busy: boolean;
   current_ticket: string | null;
+  current_description: string | null; // Human-readable summary of current work
 }

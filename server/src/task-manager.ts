@@ -95,6 +95,7 @@ export class TaskManager {
         id: i + 1,
         busy: false,
         current_ticket: null,
+        current_description: null,
       }),
     );
   }
@@ -169,6 +170,12 @@ export class TaskManager {
     );
 
     const idx = this.queue.findIndex((item) => {
+      // For Slack events, use the channel as the "ticket" to prevent parallel
+      // work on the same channel — follow-ups queue behind running work.
+      if (item.event.source === "slack" && item.event.slack_channel) {
+        const slackKey = `slack:${item.event.slack_channel}`;
+        return !busyTickets.has(slackKey);
+      }
       const ticketId = item.event.ticket_id
         ?? this.resolveTicketForPR(item.event.pr_number);
       return !ticketId || !busyTickets.has(ticketId);
@@ -193,7 +200,9 @@ export class TaskManager {
     // Slack messages — single smart call that decides and acts
     if (event.source === "slack" && event.slack_channel) {
       worker.busy = true;
+      // Include channel AND message snippet so status checks can report what's happening
       worker.current_ticket = `slack:${event.slack_channel}`;
+      worker.current_description = event.comment_body?.slice(0, 120) ?? "slack message";
       console.log(`[W${worker.id}] → slack ${event.slack_channel} "${event.comment_body?.slice(0, 50)}"`);
       try {
         await this.handleSlack(worker, event);
@@ -202,6 +211,7 @@ export class TaskManager {
       } finally {
         worker.busy = false;
         worker.current_ticket = null;
+        worker.current_description = null;
         this.processNext();
       }
       return;
@@ -226,6 +236,7 @@ export class TaskManager {
     // Mark worker busy
     worker.busy = true;
     worker.current_ticket = result.session.ticket_id;
+    worker.current_description = `${result.session.ticket_id}: ${result.session.ticket_title}`;
 
     console.log(
       `[W${worker.id}] → ${result.session.ticket_id} (${result.session.phase}) event=${event.type}`,
@@ -250,6 +261,7 @@ export class TaskManager {
     } finally {
       worker.busy = false;
       worker.current_ticket = null;
+      worker.current_description = null;
       this.processNext();
     }
   }
@@ -392,10 +404,10 @@ export class TaskManager {
       .join("\n") || "No active work.";
 
     // Check if any workers are currently busy (running Opus work)
-    const busyWorkers = this.workers.filter((w) => w.busy);
+    const busyWorkers = this.workers.filter((w) => w.busy && w.id !== worker.id);
     const workerStatus = busyWorkers.length > 0
-      ? `Currently running: ${busyWorkers.map((w) => `Worker ${w.id} on ${w.current_ticket}`).join(", ")}`
-      : "All workers idle — not currently running any code.";
+      ? `IMPORTANT — Work already in progress on other workers:\n${busyWorkers.map((w) => `  Worker ${w.id}: ${w.current_description ?? w.current_ticket ?? "unknown task"}`).join("\n")}\nIf the user asks for status, tell them work IS running. Do NOT say you haven't started or are waiting for the go-ahead.`
+      : "All other workers idle — no background work in progress.";
 
     const userHistory = getUserContext(event.slack_user ?? "", 15);
     const channelHistory = getChannelContext(event.slack_channel!, 10);
@@ -430,7 +442,9 @@ Reply in JSON format: {"action": "chat" or "work", "reply": "your natural reply 
 If it's WORK (someone asking you to go do something — create repos, fix code, run tests, etc.), acknowledge naturally in the reply. The system will dispatch the actual work.
 If it's CHAT (questions, status checks, banter), just answer in the reply.
 
-"What's your status?" → chat. "Go create a repo" → work. "Can you check CI?" → could be either, use judgment. When in doubt, chat.`,
+"What's your status?" → chat. "Go create a repo" → work. "Can you check CI?" → could be either, use judgment. When in doubt, chat.
+
+CRITICAL: If the runtime status shows work is in progress, you MUST report that accurately. Do NOT say you haven't started or are waiting for the go-ahead when a worker is already running. Be honest about what's happening — "I'm already working on it, Worker N is handling it right now" is better than a confused non-answer.`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
         }),
       });
@@ -517,8 +531,13 @@ If it's CHAT (questions, status checks, banter), just answer in the reply.
       "",
       `## Instructions`,
       `Do the work requested. You have full tool access — clone repos, write code, run tests, push, create PRs.`,
-      `When done, post a SHORT summary of what you did. Keep it concise.`,
+      `When done, end your response with a SHORT summary of what you did. Keep it concise.`,
       `Stay in character as Bender.`,
+      ``,
+      `## IMPORTANT: Response Rules`,
+      `- Do NOT post to Slack yourself. Do NOT use curl to call the Slack API. The server will relay your final summary to the user automatically.`,
+      `- Write exactly ONE summary at the end of your work — the system extracts it and sends it to Slack for you.`,
+      `- If the user's message contains multiple requests, address all of them in a single response.`,
     ].join("\n");
 
     // Use a temporary session-like object for the executor
