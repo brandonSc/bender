@@ -48,6 +48,10 @@ export async function emitActivity(
   agentSessionId: string,
   content: ActivityContent,
 ): Promise<void> {
+  const preview = content.body?.slice(0, 200) ?? content.action ?? "";
+  console.log(
+    `[linear:out] → session=${agentSessionId.slice(0, 8)}… type=${content.type}: "${preview}"${(content.body?.length ?? 0) > 200 ? "…" : ""}`,
+  );
   try {
     await gql(
       `mutation($input: AgentActivityCreateInput!) {
