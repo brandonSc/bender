@@ -27,11 +27,12 @@ if [ ! -f "$SESSION_FILE" ]; then
   exit 1
 fi
 
-# Update repo, pr_number, and advance phase from "starting" to "impl_review"
+# Update repo, pr_number, advance phase, and clear stale Claude session
+# (old session has context for whatever PR was previously linked)
 UPDATED=$(jq \
   --arg repo "$REPO" \
   --argjson pr "$PR_NUMBER" \
-  '.repo = $repo | .pr_number = $pr | if .phase == "starting" then .phase = "impl_review" else . end' \
+  '.repo = $repo | .pr_number = $pr | .claude_session_id = null | if .phase == "starting" then .phase = "impl_review" else . end' \
   "$SESSION_FILE")
 
 echo "$UPDATED" > "$SESSION_FILE"
