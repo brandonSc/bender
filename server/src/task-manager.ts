@@ -437,7 +437,10 @@ export class TaskManager {
 
     const sessions = listActiveSessions();
     const sessionSummary = sessions
-      .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
+      .map((s) => {
+        const threadMatch = (event.slack_thread_ts && s.slack_thread_ts === event.slack_thread_ts) ? " ← THIS THREAD" : "";
+        return `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"}, repo: ${s.repo || "unknown"})${threadMatch}`;
+      })
       .join("\n") || "No active work.";
 
     const busyWorkers = this.workers.filter((w) => w.busy && w.id !== worker.id);
@@ -481,6 +484,8 @@ Guidelines:
 - "Fix that typo" → work (dead simple)
 - "Can you look into why CI is failing?" → plan (investigation, unclear scope)
 - When in doubt between plan and work, choose plan. It's better to confirm than go down a rabbit hole.
+
+IMPORTANT — Thread context: Each thread is tied to a specific PR/task (marked "THIS THREAD" above). If the user mentions a different PR or repo than the one this thread is for, politely point it out: "Hey, this thread is for PR #X on repo Y — did you mean to ask in the other thread?" Don't silently work on the wrong PR.
 - Plans should be concise numbered steps, not essays.
 
 If runtime status shows work in progress, report it accurately.`,
