@@ -584,22 +584,15 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
     }
 
     const durationSec = Math.round(claudeResult.durationMs / 1000);
-    const summary = extractSummary(claudeResult.stdout || claudeResult.stderr);
 
-    let reply: string;
-    if (claudeResult.killed) {
-      reply = await benderSpeak(`Hit the time limit after ${durationSec}s working on: "${event.comment_body?.slice(0, 60)}". Work is partially done.${summary ? ` Last status: ${summary}` : ""}`);
-    } else if (claudeResult.exitCode !== 0) {
-      reply = await benderSpeak(`Hit an error (exit ${claudeResult.exitCode}) after ${durationSec}s. ${summary || "Something went wrong."}`);
-    } else if (summary) {
-      reply = summary;
-    } else {
-      reply = await benderSpeak(`Finished working on that after ${durationSec}s. Couldn't extract a clear summary of what happened though.`);
-    }
-
-    if (event.slack_channel) {
-      await slackPostMessage(event.slack_channel, reply, event.slack_thread_ts);
-      recordMessage(event.slack_channel, "bender", reply, `reply:${event.id}`);
+    // Only post server-side for errors/timeouts — Claude handles its own
+    // success communication via Slack API during the run.
+    if (claudeResult.killed && event.slack_channel) {
+      const msg = await benderSpeak(`Hit the time limit after ${durationSec}s. Work is partially done.`);
+      await slackPostMessage(event.slack_channel, msg, event.slack_thread_ts);
+    } else if (claudeResult.exitCode !== 0 && event.slack_channel) {
+      const msg = await benderSpeak(`Hit an error (exit ${claudeResult.exitCode}) after ${durationSec}s.`);
+      await slackPostMessage(event.slack_channel, msg, event.slack_thread_ts);
     }
 
     console.log(
