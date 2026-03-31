@@ -61,6 +61,13 @@ export interface Session {
 
   retry_count: number;
   max_retries: number;
+
+  // Multi-PR support (PRs opened on other repos during this task)
+  additional_prs: Array<{ repo: string; pr_number: number }>;
+
+  // Slack "agent tab" — the thread where Bender communicates for this session
+  slack_channel: string | null;
+  slack_thread_ts: string | null;
 }
 
 // --- Events ---

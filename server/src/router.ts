@@ -3,7 +3,9 @@ import {
   findSessionForEvent,
   createSession,
   saveSession,
+  archiveSession,
 } from "./session-store.js";
+import { closeTicket } from "./linear-client.js";
 import { resolve } from "node:path";
 
 const REPOS_DIR = resolve(process.env.HOME ?? "/home/ubuntu", "repos");
@@ -143,8 +145,22 @@ export function routeEvent(event: TaskEvent): RouteResult | null {
         session.phase = "done";
         session.status = "done";
         saveSession(session);
+
+        // Auto-close the Linear ticket
+        if (session.ticket_id && session.ticket_id !== "slack-work") {
+          closeTicket(session.ticket_id).catch((err) =>
+            console.error(`[router] Failed to close ${session.ticket_id}:`, err),
+          );
+        }
+
+        // Archive the session after a delay (let any final webhooks settle)
+        setTimeout(() => {
+          archiveSession(session.ticket_id);
+          console.log(`[router] Archived session ${session.ticket_id}`);
+        }, 30000);
+
         return {
-          action: "invoke", // Let Claude do cleanup (Linear status, archive)
+          action: "invoke",
           session,
           event,
           isNewSession: false,
@@ -209,6 +225,10 @@ function newSession(event: TaskEvent): Session {
 
     retry_count: 0,
     max_retries: 3,
+
+    additional_prs: [],
+    slack_channel: null,
+    slack_thread_ts: null,
   };
 }
 

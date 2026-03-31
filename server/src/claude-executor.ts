@@ -27,6 +27,7 @@ export async function invokeClaude(
   config: Config,
   githubToken?: string,
   lightMode?: boolean,
+  extraEnv?: Record<string, string>,
 ): Promise<ClaudeResult> {
   const args: string[] = [];
   const isResume = !!session.claude_session_id;
@@ -94,6 +95,7 @@ export async function invokeClaude(
           BENDER_AGENT_SESSION_ID: session.agent_session_id,
           BENDER_LINEAR_TOKEN: getLinearToken() ?? "",
         } : {}),
+        ...(extraEnv ?? {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

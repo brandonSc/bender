@@ -18,6 +18,7 @@ import {
 import { postMessage as slackPostMessage } from "./slack-client.js";
 import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
+import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
 
 async function benderChat(
   userMessage: string,
@@ -284,7 +285,21 @@ export class TaskManager {
       console.warn(`[W${worker.id}] Failed to get GitHub token:`, err);
     }
 
-    // Only post a thought for new tickets, not every resumed message
+    // For new tickets, DM the assignee on Slack to create the "agent tab" thread
+    if (isNewSession && !session.slack_channel) {
+      try {
+        const slackThread = await this.initSlackThreadForSession(session, event);
+        if (slackThread) {
+          session.slack_channel = slackThread.channel;
+          session.slack_thread_ts = slackThread.threadTs;
+          saveSession(session);
+        }
+      } catch (err) {
+        console.warn(`[W${worker.id}] Failed to init Slack thread:`, err);
+      }
+    }
+
+    // Post a thought to Linear for new tickets
     if (session.agent_session_id && isNewSession) {
       const msg = await benderSpeak(
         `Starting work on ticket ${session.ticket_id}: "${session.ticket_title}"`,
@@ -314,7 +329,12 @@ export class TaskManager {
       session.claude_session_id = null;
     }
 
-    const claudeResult = await invokeClaude(session, prompt, this.config, githubToken, isChat);
+    // Pass Slack reply vars if session has an agent tab
+    const sessionEnv: Record<string, string> = {};
+    if (session.slack_channel) sessionEnv.BENDER_REPLY_CHANNEL = session.slack_channel;
+    if (session.slack_thread_ts) sessionEnv.BENDER_REPLY_THREAD = session.slack_thread_ts;
+
+    const claudeResult = await invokeClaude(session, prompt, this.config, githubToken, isChat, Object.keys(sessionEnv).length > 0 ? sessionEnv : undefined);
 
     // Restore session ID (don't lose it for future code work)
     if (isChat && savedSessionId) {
@@ -398,21 +418,36 @@ export class TaskManager {
       recordMessage(event.slack_channel!, event.slack_user, event.comment_body, event.id);
     }
 
+    // Check if this is an approval for a pending plan
+    const threadTs = event.slack_thread_ts;
+    if (threadTs && event.comment_body) {
+      const pending = getPendingPlan(event.slack_channel!, threadTs);
+      if (pending && isApproval(event.comment_body)) {
+        console.log(`[W${worker.id}] Plan approved — dispatching work`);
+        await slackPostMessage(event.slack_channel!, "Let's do this.", threadTs);
+        event.slack_thread_ts = threadTs;
+        const workEvent = consumePlan(event.slack_channel!, threadTs);
+        if (workEvent) {
+          workEvent.slack_thread_ts = threadTs;
+          await this.handleSlackWork(worker, workEvent);
+        }
+        return;
+      }
+    }
+
     const sessions = listActiveSessions();
     const sessionSummary = sessions
       .map((s) => `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"})`)
       .join("\n") || "No active work.";
 
-    // Check if any workers are currently busy (running Opus work)
     const busyWorkers = this.workers.filter((w) => w.busy && w.id !== worker.id);
     const workerStatus = busyWorkers.length > 0
-      ? `IMPORTANT — Work already in progress on other workers:\n${busyWorkers.map((w) => `  Worker ${w.id}: ${w.current_description ?? w.current_ticket ?? "unknown task"}`).join("\n")}\nIf the user asks for status, tell them work IS running. Do NOT say you haven't started or are waiting for the go-ahead.`
+      ? `IMPORTANT — Work already in progress on other workers:\n${busyWorkers.map((w) => `  Worker ${w.id}: ${w.current_description ?? w.current_ticket ?? "unknown task"}`).join("\n")}\nIf the user asks for status, tell them work IS running.`
       : "All other workers idle — no background work in progress.";
 
     const userHistory = getUserContext(event.slack_user ?? "", 15);
-    const channelHistory = getChannelContext(event.slack_channel!, 10);
 
-    // One Sonnet call: read the message, decide what to do, respond
+    // One Sonnet call: classify + respond
     try {
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -423,7 +458,7 @@ export class TaskManager {
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          max_tokens: 1500,
           system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, concise, a bit cocky. No Claude-isms. No action narration.
 
 Your active work:
@@ -433,18 +468,22 @@ Runtime status: ${workerStatus}
 
 ${userHistory ? `Conversation history with this user:\n${userHistory}` : ""}
 
-You have two modes:
+You have three modes:
 1. CHAT — answering questions, status updates, banter. Just reply directly.
-2. WORK — someone is asking you to actually go do something (create repos, fix code, run tests, etc.)
+2. PLAN — someone is asking you to do non-trivial work. Propose a numbered plan for approval before starting.
+3. WORK — someone said "yes/go/do it" to a plan, OR the task is dead simple (one-liner, trivial fix). Execute immediately.
 
-Reply in JSON format: {"action": "chat" or "work", "reply": "your natural reply here"}
+Reply in JSON: {"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)"}
 
-If it's WORK (someone asking you to go do something — create repos, fix code, run tests, etc.), acknowledge naturally in the reply. The system will dispatch the actual work.
-If it's CHAT (questions, status checks, banter), just answer in the reply.
+Guidelines:
+- "What's your status?" → chat
+- "Go create a .NET repo, add it to the config, test the collector" → plan (multi-step, non-trivial)
+- "Fix that typo" → work (dead simple)
+- "Can you look into why CI is failing?" → plan (investigation, unclear scope)
+- When in doubt between plan and work, choose plan. It's better to confirm than go down a rabbit hole.
+- Plans should be concise numbered steps, not essays.
 
-"What's your status?" → chat. "Go create a repo" → work. "Can you check CI?" → could be either, use judgment. When in doubt, chat.
-
-CRITICAL: If the runtime status shows work is in progress, you MUST report that accurately. Do NOT say you haven't started or are waiting for the go-ahead when a worker is already running. Be honest about what's happening — "I'm already working on it, Worker N is handling it right now" is better than a confused non-answer.`,
+If runtime status shows work in progress, report it accurately.`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
         }),
       });
@@ -457,31 +496,48 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       const data = (await resp.json()) as { content: Array<{ text: string }> };
       const rawReply = data.content[0].text;
 
-      // Parse JSON response, fallback to treating as plain chat
-      let isWork = false;
+      let action = "chat";
       let cleanReply = rawReply;
+      let planText = "";
       try {
         const jsonStr = rawReply.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(jsonStr) as { action: string; reply: string };
-        isWork = parsed.action === "work";
+        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string };
+        action = parsed.action;
         cleanReply = parsed.reply;
+        planText = parsed.plan ?? "";
       } catch {
-        // Not JSON — treat as plain chat reply
-        isWork = false;
+        action = "chat";
         cleanReply = rawReply;
       }
 
-      // Post the reply immediately
-      const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
-      recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
-      console.log(`[W${worker.id}] ← slack ${isWork ? "ack+work" : "chat"} (${cleanReply.length} chars)`);
-
-      // If work, dispatch the full CLI — completion goes in thread under the ack
-      if (isWork) {
-        console.log(`[W${worker.id}] Dispatching full CLI for Slack work request`);
+      if (action === "plan") {
+        // Post the plan and wait for approval
+        const fullReply = planText
+          ? `${cleanReply}\n\n${planText}\n\nGo ahead?`
+          : cleanReply;
+        const ackTs = await slackPostMessage(event.slack_channel!, fullReply, event.slack_thread_ts);
+        recordMessage(event.slack_channel!, "bender", fullReply, `reply:${event.id}`);
+        const planThreadTs = event.slack_thread_ts ?? ackTs;
+        if (planThreadTs) {
+          storePlan(event.slack_channel!, planThreadTs, event, planText || cleanReply);
+          // Track the thread so follow-ups reach us without @mention
+          const { trackThread } = await import("./slack-threads.js");
+          trackThread(`${event.slack_channel}:${planThreadTs}`);
+        }
+        console.log(`[W${worker.id}] ← slack plan posted, waiting for approval`);
+      } else if (action === "work") {
+        // Post ack and dispatch immediately
+        const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+        recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+        console.log(`[W${worker.id}] ← slack ack+work (${cleanReply.length} chars)`);
         const workThreadTs = event.slack_thread_ts ?? ackTs;
         event.slack_thread_ts = workThreadTs;
         await this.handleSlackWork(worker, event);
+      } else {
+        // Chat — just post the reply
+        await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+        recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+        console.log(`[W${worker.id}] ← slack chat (${cleanReply.length} chars)`);
       }
     } catch (err) {
       console.error(`[W${worker.id}] Slack handler error:`, err);
@@ -533,14 +589,14 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       "",
       `## Instructions`,
       `Do the work requested. You have full tool access — clone repos, write code, run tests, push, create PRs.`,
-      `When done, end your response with a SHORT summary of what you did. Keep it concise.`,
       `Stay in character as Bender.`,
       ``,
-      `## Response Rules`,
-      `- You CAN post to Slack channels using curl. You have the SLACK_BOT_TOKEN env var available.`,
-      `  curl -s -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"channel":"CHANNEL_ID","text":"your message"}'`,
+      `## Communication`,
+      `Post updates and questions to the Slack thread you were invoked from:`,
+      `  curl -s -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"channel":"'$BENDER_REPLY_CHANNEL'","thread_ts":"'$BENDER_REPLY_THREAD'","text":"your message"}'`,
+      `- Post a brief update when you hit milestones or finish.`,
+      `- If you need clarification, ask in the thread and then continue with your best guess. Don't block.`,
       `- If asked to message someone in a specific channel, do it directly.`,
-      `- When done with work, write a SHORT summary as your final output — the server sends it back to the requester.`,
       `- If the user's message contains multiple requests, address all of them.`,
     ].join("\n");
 
@@ -571,11 +627,20 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       worktree_path: resolve(homedir(), "repos"),
       retry_count: 0,
       max_retries: 3,
+      additional_prs: [],
+      slack_channel: event.slack_channel ?? null,
+      slack_thread_ts: event.slack_thread_ts ?? null,
     };
 
     // Fresh invocation — don't resume, stale context causes hallucinated rules
     tempSession.claude_session_id = null;
-    const claudeResult = await invokeClaude(tempSession, prompt, this.config, githubToken, false);
+
+    // Pass reply channel/thread so Claude CLI can post updates to the right thread
+    const extraEnv: Record<string, string> = {};
+    if (event.slack_channel) extraEnv.BENDER_REPLY_CHANNEL = event.slack_channel;
+    if (event.slack_thread_ts) extraEnv.BENDER_REPLY_THREAD = event.slack_thread_ts;
+
+    const claudeResult = await invokeClaude(tempSession, prompt, this.config, githubToken, false, extraEnv);
 
     // Save session ID if captured
     if (claudeResult.sessionId && activeSession) {
@@ -583,10 +648,37 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       saveSession(activeSession);
     }
 
+    // Extract PRs from Claude's output and persist to session
+    const prMatches = (claudeResult.stdout + claudeResult.stderr)
+      .matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
+    for (const match of prMatches) {
+      const repo = match[1];
+      const prNum = parseInt(match[2], 10);
+      if (activeSession) {
+        if (!activeSession.additional_prs) activeSession.additional_prs = [];
+        const alreadyTracked =
+          (activeSession.pr_number === prNum && activeSession.repo === repo) ||
+          activeSession.additional_prs.some((ap) => ap.pr_number === prNum && ap.repo === repo);
+        if (!alreadyTracked) {
+          activeSession.additional_prs.push({ repo, pr_number: prNum });
+          saveSession(activeSession);
+          console.log(`[W${worker.id}] Tracked new PR: ${repo}#${prNum} on ${activeSession.ticket_id}`);
+        }
+      }
+    }
+
+    // Store Slack thread on session for future reference
+    if (activeSession && event.slack_channel && event.slack_thread_ts) {
+      if (!activeSession.slack_channel) {
+        activeSession.slack_channel = event.slack_channel;
+        activeSession.slack_thread_ts = event.slack_thread_ts;
+        saveSession(activeSession);
+      }
+    }
+
     const durationSec = Math.round(claudeResult.durationMs / 1000);
 
-    // Only post server-side for errors/timeouts — Claude handles its own
-    // success communication via Slack API during the run.
+    // Only post server-side for errors/timeouts
     if (claudeResult.killed && event.slack_channel) {
       const msg = await benderSpeak(`Hit the time limit after ${durationSec}s. Work is partially done.`);
       await slackPostMessage(event.slack_channel, msg, event.slack_thread_ts);
@@ -600,7 +692,75 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
     );
   }
 
-  // handleSlackMessage removed — replaced by handleSlack
+  /**
+   * Initialize a Slack DM thread for a session — the "agent tab."
+   * Looks up the ticket assignee in PEOPLE.json, opens a DM, posts an init message.
+   */
+  private async initSlackThreadForSession(
+    session: Session,
+    event: TaskEvent,
+  ): Promise<{ channel: string; threadTs: string } | null> {
+    if (!process.env.SLACK_BOT_TOKEN) return null;
+
+    // Load PEOPLE.json
+    const peoplePath = resolve(homedir(), "repos", "PEOPLE.json");
+    if (!existsSync(peoplePath)) {
+      const altPath = resolve(homedir(), "bender", "PEOPLE.json");
+      if (!existsSync(altPath)) return null;
+    }
+
+    let people: Record<string, { github: string; slack: string; linear: string }>;
+    try {
+      const p = existsSync(resolve(homedir(), "repos", "PEOPLE.json"))
+        ? resolve(homedir(), "repos", "PEOPLE.json")
+        : resolve(homedir(), "bender", "PEOPLE.json");
+      people = JSON.parse(readFileSync(p, "utf-8"));
+    } catch {
+      return null;
+    }
+
+    // Find the assignee from the event's raw payload
+    const raw = event.raw as Record<string, unknown> | undefined;
+    const agentSession = raw?.agentSession as Record<string, unknown> | undefined;
+    const creator = agentSession?.creator as Record<string, unknown> | undefined;
+    const assigneeName = creator?.name as string | undefined;
+
+    if (!assigneeName) return null;
+
+    const person = people[assigneeName];
+    if (!person?.slack) {
+      console.log(`[slack] No Slack ID for ${assigneeName} in PEOPLE.json`);
+      return null;
+    }
+
+    // Open a DM channel
+    const openResp = await fetch("https://slack.com/api/conversations.open", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+      },
+      body: JSON.stringify({ users: person.slack }),
+    });
+    const openData = (await openResp.json()) as Record<string, unknown>;
+    if (!openData.ok) return null;
+
+    const dmChannel = (openData.channel as Record<string, unknown>)?.id as string;
+    if (!dmChannel) return null;
+
+    // Post the init message
+    const initMsg = await benderSpeak(
+      `Picked up ticket ${session.ticket_id}: "${session.ticket_title}". Going to work on it and will post updates in this thread.`,
+    );
+    const ticketLink = session.ticket_url ? ` <${session.ticket_url}|${session.ticket_id}>` : ` ${session.ticket_id}`;
+    const fullMsg = `${initMsg}\n\nTicket:${ticketLink}`;
+
+    const msgTs = await slackPostMessage(dmChannel, fullMsg);
+    if (!msgTs) return null;
+
+    console.log(`[slack] Initialized agent tab for ${session.ticket_id} → DM with ${assigneeName}`);
+    return { channel: dmChannel, threadTs: msgTs };
+  }
 
   /**
    * Get status summary for the status endpoint.

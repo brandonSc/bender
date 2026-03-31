@@ -127,6 +127,38 @@ export async function getTeamStates(teamKey: string): Promise<
 }
 
 /**
+ * Close a ticket by moving it to "Done" state.
+ * Finds the Done state for the ticket's team and transitions it.
+ */
+export async function closeTicket(ticketIdentifier: string): Promise<boolean> {
+  try {
+    const issue = await getIssue(ticketIdentifier);
+    if (!issue) return false;
+    if (issue.state.name === "Done" || issue.state.name === "Canceled") return true;
+
+    // Get the team's states to find "Done"
+    const issueData = await query(
+      `query($id: String!) {
+        issue(id: $id) { team { states { nodes { id name type } } } }
+      }`,
+      { id: ticketIdentifier },
+    ) as { issue: { team: { states: { nodes: Array<{ id: string; name: string; type: string }> } } } };
+
+    const doneState = issueData.issue.team.states.nodes.find(
+      (s) => s.type === "completed" || s.name === "Done",
+    );
+    if (!doneState) return false;
+
+    await updateIssueState(issue.id, doneState.id);
+    console.log(`[linear] Closed ticket ${ticketIdentifier} → ${doneState.name}`);
+    return true;
+  } catch (err) {
+    console.error(`[linear] Failed to close ticket ${ticketIdentifier}:`, err);
+    return false;
+  }
+}
+
+/**
  * Get the authenticated application/user info (to verify token works).
  */
 export async function getViewer(): Promise<{ id: string; name: string; email?: string }> {

@@ -134,11 +134,11 @@ export function findSessionForEvent(event: {
     if (session) return session;
   }
 
-  // Scan all sessions — match by PR number or by repo when session has no PR yet
+  // Scan all sessions — match by PR number, additional_prs, or fallback
   if (event.pr_number) {
     const sessions = listActiveSessions();
 
-    // Exact PR match
+    // Exact PR match on primary
     const exact = sessions.find(
       (s) =>
         s.pr_number === event.pr_number &&
@@ -146,8 +146,17 @@ export function findSessionForEvent(event: {
     );
     if (exact) return exact;
 
-    // If session has no pr_number yet, match by repo.
-    // This handles the case where Claude opened a PR but the session wasn't updated.
+    // Match on additional_prs
+    const byAdditional = sessions.find((s) =>
+      s.additional_prs?.some(
+        (ap) =>
+          ap.pr_number === event.pr_number &&
+          (!event.repo || ap.repo === event.repo),
+      ),
+    );
+    if (byAdditional) return byAdditional;
+
+    // If session has no pr_number yet, match by repo and backfill
     if (event.repo) {
       const byRepo = sessions.find(
         (s) => !s.pr_number && (s.repo === event.repo || !s.repo),
@@ -161,6 +170,22 @@ export function findSessionForEvent(event: {
         );
         return byRepo;
       }
+    }
+
+    // Fallback: if only one active session exists, assume this PR belongs to it
+    // (Bender usually works one task at a time)
+    if (sessions.length === 1) {
+      const solo = sessions[0];
+      if (!solo.additional_prs) solo.additional_prs = [];
+      solo.additional_prs.push({
+        repo: event.repo ?? "",
+        pr_number: event.pr_number,
+      });
+      saveSession(solo);
+      console.log(
+        `[session] Fallback: linked PR#${event.pr_number} to ${solo.ticket_id} via additional_prs`,
+      );
+      return solo;
     }
   }
 
@@ -178,7 +203,7 @@ function updateIndexes(session: Session): void {
     // Symlink may fail on some systems, that's OK — we have fallback lookups
   }
 
-  // PR index
+  // PR index (primary)
   if (session.pr_number && session.repo) {
     const prDir = resolve(indexByPrDir(), session.repo);
     mkdirSync(prDir, { recursive: true });
@@ -188,6 +213,21 @@ function updateIndexes(session: Session): void {
       symlinkSync(sessionFile, prLink);
     } catch {
       // Same fallback
+    }
+  }
+
+  // PR index (additional PRs)
+  if (session.additional_prs) {
+    for (const ap of session.additional_prs) {
+      if (ap.repo && ap.pr_number) {
+        const prDir = resolve(indexByPrDir(), ap.repo);
+        mkdirSync(prDir, { recursive: true });
+        const prLink = resolve(prDir, ap.pr_number.toString());
+        try {
+          if (existsSync(prLink)) unlinkSync(prLink);
+          symlinkSync(sessionFile, prLink);
+        } catch {}
+      }
     }
   }
 }
