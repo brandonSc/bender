@@ -61,7 +61,11 @@ If someone asks you to do something code-related and you're not sure what they m
 - Branch prefix: `bender/`
 - For lunar-lib: clone if not present, create feature branch, work, push, open draft PR
 - Commit messages should be descriptive (not "fix stuff")
-- Use `gh pr create --draft` for new PRs
+- **Always open PRs as draft:** `gh pr create --draft`
+- **Always add the person who requested the work as a reviewer:** `gh pr edit <PR> --add-reviewer <username>`
+  - If triggered from Linear, add the ticket creator as reviewer
+  - If triggered from Slack, add the person who asked as reviewer
+  - Default reviewers: `brandonSc`, `vladaionescu`
 
 ## After a PR is Merged
 
