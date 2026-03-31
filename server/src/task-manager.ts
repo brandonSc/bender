@@ -536,10 +536,12 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       `When done, end your response with a SHORT summary of what you did. Keep it concise.`,
       `Stay in character as Bender.`,
       ``,
-      `## IMPORTANT: Response Rules`,
-      `- Do NOT post to Slack yourself. Do NOT use curl to call the Slack API. The server will relay your final summary to the user automatically.`,
-      `- Write exactly ONE summary at the end of your work — the system extracts it and sends it to Slack for you.`,
-      `- If the user's message contains multiple requests, address all of them in a single response.`,
+      `## Response Rules`,
+      `- You CAN post to Slack channels using curl. You have the SLACK_BOT_TOKEN env var available.`,
+      `  curl -s -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"channel":"CHANNEL_ID","text":"your message"}'`,
+      `- If asked to message someone in a specific channel, do it directly.`,
+      `- When done with work, write a SHORT summary as your final output — the server sends it back to the requester.`,
+      `- If the user's message contains multiple requests, address all of them.`,
     ].join("\n");
 
     // Use a temporary session-like object for the executor
@@ -571,7 +573,8 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       max_retries: 3,
     };
 
-    // Resume the session if one exists — same as a PR comment
+    // Fresh invocation — don't resume, stale context causes hallucinated rules
+    tempSession.claude_session_id = null;
     const claudeResult = await invokeClaude(tempSession, prompt, this.config, githubToken, false);
 
     // Save session ID if captured
