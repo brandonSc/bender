@@ -472,13 +472,15 @@ CRITICAL: If the runtime status shows work is in progress, you MUST report that 
       }
 
       // Post the reply immediately
-      await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+      const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
       recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
       console.log(`[W${worker.id}] ← slack ${isWork ? "ack+work" : "chat"} (${cleanReply.length} chars)`);
 
-      // If work, dispatch the full CLI
+      // If work, dispatch the full CLI — completion goes in thread under the ack
       if (isWork) {
         console.log(`[W${worker.id}] Dispatching full CLI for Slack work request`);
+        const workThreadTs = event.slack_thread_ts ?? ackTs;
+        event.slack_thread_ts = workThreadTs;
         await this.handleSlackWork(worker, event);
       }
     } catch (err) {

@@ -31,12 +31,13 @@ export async function postMessage(
   channel: string,
   text: string,
   threadTs?: string,
-): Promise<void> {
-  await slackApi("chat.postMessage", {
+): Promise<string | undefined> {
+  const result = await slackApi("chat.postMessage", {
     channel,
     text,
     ...(threadTs ? { thread_ts: threadTs } : {}),
   });
+  return (result.message as Record<string, unknown>)?.ts as string | undefined;
 }
 
 export async function addReaction(
