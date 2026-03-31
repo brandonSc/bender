@@ -32,6 +32,9 @@ export async function postMessage(
   text: string,
   threadTs?: string,
 ): Promise<string | undefined> {
+  console.log(
+    `[slack:out] → ${channel}${threadTs ? ` (thread ${threadTs})` : ""}: "${text.slice(0, 200)}"${text.length > 200 ? "…" : ""}`,
+  );
   const result = await slackApi("chat.postMessage", {
     channel,
     text,
@@ -45,6 +48,7 @@ export async function addReaction(
   timestamp: string,
   emoji: string,
 ): Promise<void> {
+  console.log(`[slack:out] → ${channel} react :${emoji}: on ${timestamp}`);
   await slackApi("reactions.add", {
     channel,
     timestamp,
