@@ -20,6 +20,24 @@ import { recordMessage, getUserContext, getChannelContext } from "./slack-memory
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
 
+async function getGitHubToken(repoOrg?: string): Promise<string | undefined> {
+  try {
+    const octokit = getAppOctokit();
+    const { data: installations } = await octokit.rest.apps.listInstallations();
+    if (installations.length === 0) return undefined;
+
+    // Pick the installation matching the repo's org, or default to 'earthly'
+    const org = repoOrg?.split("/")[0] ?? "earthly";
+    const match = installations.find((i) => i.account?.login === org)
+      ?? installations.find((i) => i.account?.login === "earthly")
+      ?? installations[0];
+
+    return await getInstallationToken(match.id);
+  } catch {
+    return undefined;
+  }
+}
+
 async function benderChat(
   userMessage: string,
   session: { ticket_id: string; ticket_title: string; phase: string; pr_number: number | null },
@@ -273,17 +291,8 @@ export class TaskManager {
   ): Promise<void> {
     const { session, event, isNewSession, needsCheckpoint } = result;
 
-    // Get a GitHub installation token for Claude to use
-    let githubToken: string | undefined;
-    try {
-      const octokit = getAppOctokit();
-      const { data: installations } = await octokit.rest.apps.listInstallations();
-      if (installations.length > 0) {
-        githubToken = await getInstallationToken(installations[0].id);
-      }
-    } catch (err) {
-      console.warn(`[W${worker.id}] Failed to get GitHub token:`, err);
-    }
+    // Get a GitHub installation token scoped to the session's repo org
+    const githubToken = await getGitHubToken(session.repo);
 
     // For new tickets, DM the assignee on Slack to create the "agent tab" thread
     if (isNewSession && !session.slack_channel) {
@@ -569,15 +578,7 @@ If runtime status shows work in progress, report it accurately.`,
     }
     // Otherwise don't assume — the work will create its own session if it opens a PR
 
-    // Get GitHub token
-    let githubToken: string | undefined;
-    try {
-      const octokit = getAppOctokit();
-      const { data: installations } = await octokit.rest.apps.listInstallations();
-      if (installations.length > 0) {
-        githubToken = await getInstallationToken(installations[0].id);
-      }
-    } catch {}
+    const githubToken = await getGitHubToken(activeSession?.repo);
 
     // Build prompt with work context
     const identity = existsSync(resolve(homedir(), "repos", "BENDER-IDENTITY.md"))
