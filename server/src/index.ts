@@ -260,7 +260,13 @@ app.post("/webhooks/slack", async (req, res) => {
   res.json({ ok: true });
 
   const event = parseSlackEvent(req.body, slackBotUserId);
-  if (!event) return;
+  if (!event) {
+    const slackEvt = req.body.event as Record<string, unknown> | undefined;
+    if (slackEvt?.type === "message" && slackEvt?.user) {
+      console.log(`[slack] Dropped message: subtype=${slackEvt.subtype ?? "none"} channel_type=${slackEvt.channel_type ?? "?"} user=${slackEvt.user} bot_id=${slackEvt.bot_id ?? "none"}`);
+    }
+    return;
+  }
 
   // Deduplicate: Slack sends both app_mention AND message for @mentions
   const slackEvent = req.body.event as Record<string, unknown>;
