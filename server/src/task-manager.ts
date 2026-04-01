@@ -595,9 +595,15 @@ You have three modes:
 2. PLAN — someone is asking you to do non-trivial work. Propose a numbered plan for approval before starting.
 3. WORK — someone said "yes/go/do it" to a plan, OR the task is dead simple (one-liner, trivial fix). Execute immediately.
 
-Reply in JSON: {"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)", "context_summary": "brief summary of relevant prior context for the worker (only for action=plan or work)"}
+Reply in JSON:
+{"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)", "context_summary": "...", "workflow": "spec_first" | "implementation" | "freeform"}
 
-For plan/work actions, write a context_summary that captures ALL relevant decisions, requirements, and constraints from the conversation — both this thread AND prior interactions. The worker will only see this summary, not the raw conversation. Include specific details: file paths, naming decisions, schema choices, phase constraints (spec-only vs implementation), things the user corrected or emphasized.
+For plan/work actions:
+- context_summary: Capture ALL relevant decisions, requirements, and constraints from the conversation — both this thread AND prior interactions. The worker will only see this summary, not the raw conversation. Include specific details: file paths, naming decisions, schema choices, things the user corrected or emphasized.
+- workflow: Classify the task's workflow mode based on what the user is actually asking for:
+  - "spec_first" — Creating a new lunar-lib collector/policy following the spec-first process (YAML manifest, README, examples first, implementation later after reviewer approval). Worker must NOT write implementation code.
+  - "implementation" — Reviewers approved a spec and now it's time to write the actual code (main.sh, Python policy scripts, Dockerfiles, etc.). Or adding implementation to an existing plugin.
+  - "freeform" — Everything else: doc updates, repo setup, CI fixes, investigations, non-plugin work, work outside lunar-lib. No restrictions on what the worker can do.
 
 Guidelines:
 - "What's your status?" → chat
@@ -627,13 +633,15 @@ If runtime status shows work in progress, report it accurately.`,
       let cleanReply = rawReply;
       let planText = "";
       let contextSummary = "";
+      let workflow = "freeform";
       try {
         const jsonStr = rawReply.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string; context_summary?: string };
+        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string; context_summary?: string; workflow?: string };
         action = parsed.action;
         cleanReply = parsed.reply;
         planText = parsed.plan ?? "";
         contextSummary = parsed.context_summary ?? "";
+        workflow = parsed.workflow ?? "freeform";
       } catch {
         action = "chat";
         cleanReply = rawReply;
@@ -642,6 +650,7 @@ If runtime status shows work in progress, report it accurately.`,
       if (contextSummary) {
         event.context_summary = contextSummary;
       }
+      event.workflow = workflow as TaskEvent["workflow"];
 
       if (action === "plan") {
         // Post the plan and wait for approval
@@ -794,29 +803,25 @@ If runtime status shows work in progress, report it accurately.`,
         activeSession.pr_number ? `PR: #${activeSession.pr_number} on ${activeSession.repo}` : "",
       ].filter(Boolean) : []),
       "",
-      `## Phase Rules`,
+      `## Workflow Mode`,
       ...((() => {
-        const phase = activeSession?.phase ?? "starting";
-        const repo = activeSession?.repo ?? "";
-        const isLunarLibPlugin = repo === "earthly/lunar-lib"
-          && /\b(collector|policy|spec)\b/i.test(activeSession?.ticket_title ?? "");
-
-        if (isLunarLibPlugin && (phase === "spec_review" || phase === "starting")) {
+        const wf = event.workflow ?? "freeform";
+        if (wf === "spec_first") {
           return [
-            `**SPEC-ONLY PHASE (lunar-lib plugin workflow).** This PR is in "${phase}".`,
+            `**SPEC-FIRST WORKFLOW.** You are creating/updating a plugin spec for review.`,
             `Do NOT write implementation code (no main.sh, no Python policy scripts, no Dockerfiles).`,
             `Only create/update: YAML manifests, READMEs, example Component JSON, SVG icons, ai-context docs.`,
-            `Implementation comes later after reviewers give the go-ahead.`,
+            `Implementation comes later after reviewers approve the spec and give the go-ahead.`,
           ];
         }
-        if (isLunarLibPlugin && phase === "implementing") {
+        if (wf === "implementation") {
           return [
-            `Phase: implementing — reviewers approved the spec. Now write the implementation code.`,
+            `**IMPLEMENTATION WORKFLOW.** The spec has been approved — now write the actual code.`,
             `Follow the spec/manifests that are already in the PR as your guide.`,
           ];
         }
         return [
-          `Phase: ${phase}. No special restrictions — do whatever the task requires.`,
+          `**FREEFORM.** No workflow restrictions — do whatever the task requires.`,
         ];
       })()),
       "",
