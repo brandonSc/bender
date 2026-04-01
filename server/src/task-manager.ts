@@ -419,7 +419,8 @@ export class TaskManager {
           session.additional_prs.push({ repo, pr_number: prNum });
         }
         if (session.phase === "starting") {
-          session.phase = "impl_review";
+          const isSpec = /\bspec\b/i.test(session.ticket_title);
+          session.phase = isSpec ? "spec_review" : "impl_review";
         }
         console.log(`[W${worker.id}] Detected PR: ${repo}#${prNum} on ${session.ticket_id} (phase=${session.phase})`);
       }
@@ -793,15 +794,37 @@ If runtime status shows work in progress, report it accurately.`,
         activeSession.pr_number ? `PR: #${activeSession.pr_number} on ${activeSession.repo}` : "",
       ].filter(Boolean) : []),
       "",
+      `## Phase Rules`,
+      ...((() => {
+        const phase = activeSession?.phase ?? "starting";
+        const isSpecPhase = phase === "starting" || phase === "spec_review";
+        const title = activeSession?.ticket_title ?? "";
+        const isSpecPR = /\bspec\b/i.test(title);
+        if (isSpecPhase || isSpecPR) {
+          return [
+            `**THIS IS A SPEC-ONLY PHASE.** The PR is in "${phase}" and/or marked as spec-only.`,
+            `Do NOT write implementation code (no main.sh, no Python policy scripts, no Dockerfiles).`,
+            `Only create/update: YAML manifests, READMEs, example Component JSON, SVG icons, ai-context docs.`,
+            `Implementation comes later after reviewers give the go-ahead.`,
+          ];
+        }
+        if (phase === "implementing") {
+          return [
+            `Phase: implementing — reviewers approved the spec. Now write the implementation code.`,
+            `Follow the spec/manifests that are already in the PR as your guide.`,
+          ];
+        }
+        return [
+          `Phase: ${phase}. Proceed with the work as discussed.`,
+        ];
+      })()),
+      "",
       `## Instructions`,
       `A plan was already discussed and approved in the conversation above. Your job is to implement it.`,
       `Read the conversation history carefully to understand what was agreed upon.`,
       `If you have questions or see something that needs clarification, use \`bender-await-reply\` to ask — that's better than guessing wrong.`,
       `But do NOT just re-propose the same plan that was already approved. The human said go ahead — make progress.`,
       `Make changes, commit, and push. You have full tool access.`,
-      ``,
-      `If the conversation mentions "spec only" or the phase is spec_review, do NOT write implementation code.`,
-      `Only update manifests, READMEs, examples, documentation, and ai-context files.`,
       ``,
       `Stay in character as Bender.`,
       ``,
@@ -892,9 +915,9 @@ If runtime status shows work in progress, report it accurately.`,
           } else {
             activeSession.additional_prs.push({ repo, pr_number: prNum });
           }
-          // Advance phase if still in starting
           if (activeSession.phase === "starting") {
-            activeSession.phase = "impl_review";
+            const isSpec = /\bspec\b/i.test(activeSession.ticket_title);
+            activeSession.phase = isSpec ? "spec_review" : "impl_review";
           }
           saveSession(activeSession);
           console.log(`[W${worker.id}] Tracked PR: ${repo}#${prNum} on ${activeSession.ticket_id} (phase=${activeSession.phase})`);
