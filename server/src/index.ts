@@ -295,23 +295,29 @@ app.post("/webhooks/slack", async (req, res) => {
     // Lurk mode — evaluate whether to chime in (conservative, high threshold)
     if (!secrets.SLACK_BOT_TOKEN) return;
 
-    const decision = await evaluateLurk(
-      event.slack_channel!,
-      event.comment_body ?? "",
-      (slackEvent.ts as string) ?? "",
-      event.slack_thread_ts,
-    );
-
-    if (decision.action === "emoji_react" && decision.emoji) {
-      console.log(`[slack] Lurk → react :${decision.emoji}: (confidence=${decision.confidence})`);
-      await addReaction(event.slack_channel!, (slackEvent.ts as string) ?? "", decision.emoji);
-    } else if (decision.action === "reply" && decision.suggested_reply) {
-      console.log(`[slack] Lurk → reply (confidence=${decision.confidence})`);
-      await postMessage(
+    try {
+      const decision = await evaluateLurk(
         event.slack_channel!,
-        decision.suggested_reply,
-        decision.reply_in_thread ? (event.slack_thread_ts ?? (slackEvent.ts as string)) : undefined,
+        event.comment_body ?? "",
+        (slackEvent.ts as string) ?? "",
+        event.slack_thread_ts,
       );
+
+      if (decision.action === "emoji_react" && decision.emoji) {
+        console.log(`[slack] Lurk → react :${decision.emoji}: (confidence=${decision.confidence})`);
+        await addReaction(event.slack_channel!, (slackEvent.ts as string) ?? "", decision.emoji);
+      } else if (decision.action === "reply" && decision.suggested_reply) {
+        console.log(`[slack] Lurk → reply (confidence=${decision.confidence})`);
+        await postMessage(
+          event.slack_channel!,
+          decision.suggested_reply,
+          decision.reply_in_thread ? (event.slack_thread_ts ?? (slackEvent.ts as string)) : undefined,
+        );
+      } else {
+        console.log(`[slack] Lurk → ${decision.action} (confidence=${decision.confidence}) ch=${event.slack_channel}`);
+      }
+    } catch (err) {
+      console.error(`[slack] Lurk error:`, err);
     }
   }
 });
