@@ -63,9 +63,62 @@ export function isApproval(text: string): boolean {
   return APPROVAL_PATTERNS.test(text.trim());
 }
 
+// --- Work continuations: threads where inner Claude asked a question ---
+
+interface PendingContinuation {
+  event: TaskEvent;
+  lastOutput: string;
+  createdAt: number;
+}
+
+const pendingContinuations = new Map<string, PendingContinuation>();
+const CONTINUATION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+
+export function storeWorkContinuation(
+  channel: string,
+  threadTs: string,
+  event: TaskEvent,
+  lastOutput: string,
+): void {
+  pendingContinuations.set(planKey(channel, threadTs), {
+    event,
+    lastOutput,
+    createdAt: Date.now(),
+  });
+}
+
+export function getWorkContinuation(
+  channel: string,
+  threadTs: string | undefined,
+): PendingContinuation | null {
+  if (!threadTs) return null;
+  const key = planKey(channel, threadTs);
+  const cont = pendingContinuations.get(key);
+  if (!cont) return null;
+  if (Date.now() - cont.createdAt > CONTINUATION_TIMEOUT_MS) {
+    pendingContinuations.delete(key);
+    return null;
+  }
+  return cont;
+}
+
+export function consumeWorkContinuation(
+  channel: string,
+  threadTs: string,
+): TaskEvent | null {
+  const key = planKey(channel, threadTs);
+  const cont = pendingContinuations.get(key);
+  if (!cont) return null;
+  pendingContinuations.delete(key);
+  return cont.event;
+}
+
 function cleanup(): void {
   const now = Date.now();
   for (const [key, plan] of pendingPlans) {
     if (now - plan.createdAt > PLAN_TIMEOUT_MS) pendingPlans.delete(key);
+  }
+  for (const [key, cont] of pendingContinuations) {
+    if (now - cont.createdAt > CONTINUATION_TIMEOUT_MS) pendingContinuations.delete(key);
   }
 }
