@@ -492,7 +492,8 @@ export class TaskManager {
       const pending = getPendingPlan(event.slack_channel!, threadTs);
       if (pending && isApproval(event.comment_body)) {
         console.log(`[W${worker.id}] Plan approved — dispatching work`);
-        await slackPostMessage(event.slack_channel!, "Let's do this.", threadTs);
+        const ack = await benderSpeak(`The human approved a plan. Write a short excited 1-sentence acknowledgment.`);
+        await slackPostMessage(event.slack_channel!, ack, threadTs);
         event.slack_thread_ts = threadTs;
         const workEvent = consumePlan(event.slack_channel!, threadTs);
         if (workEvent) {
@@ -643,7 +644,7 @@ If runtime status shows work in progress, report it accurately.`,
       if (action === "plan") {
         // Post the plan and wait for approval
         const fullReply = planText
-          ? `${cleanReply}\n\n${planText}\n\nGo ahead?`
+          ? `${cleanReply}\n\n${planText}`
           : cleanReply;
         const ackTs = await slackPostMessage(event.slack_channel!, fullReply, event.slack_thread_ts);
         recordMessage(event.slack_channel!, "bender", fullReply, `reply:${event.id}`);
