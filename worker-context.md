@@ -1,0 +1,82 @@
+# Worker Context — Operational Notes for Inner Claudes
+
+This file is loaded into every worker session. It contains operational knowledge
+that isn't in the codebase docs but matters for getting things done correctly.
+
+**If you hit something confusing or undocumented during your work, ADD A NOTE HERE
+for the next worker.** This file is our shared memory. Don't let the next Claude
+make the same mistake you just figured out.
+
+---
+
+## Hub Manifest Sync (How Lunar Config Reaches the Hub)
+
+Lunar "org repos" (e.g. `pantalasa/lunar`, `pantalasa-cronos/lunar`) contain a
+`lunar-config.yml` that defines collectors, policies, components, etc.
+
+**Key fact:** When you push to `main` on one of these repos, a GitHub Actions
+workflow ("Sync Lunar Config") runs immediately and pushes the manifest to the
+hub. The hub does NOT periodically poll or sync on a schedule — it gets updates
+**only** when this workflow succeeds.
+
+**If the build fails, the hub never gets the update.** This means:
+- New collectors/policies won't appear in the UI
+- Config changes won't take effect
+- Cron hooks won't be registered
+
+**After pushing to a lunar org repo, ALWAYS check CI:**
+1. Wait ~30s, then poll: `curl -s -H "Authorization: token $TOKEN" "https://api.github.com/repos/ORG/lunar/actions/runs?per_page=1" | jq '.[0] | {status, conclusion}'`
+2. If it fails, read the logs and fix it before moving on
+3. Do NOT assume "the hub will pick it up later" — it won't
+
+## Deploying Collectors/Policies from Custom Branches (Testing)
+
+You can point a collector or policy at a custom branch for testing:
+```yaml
+- uses: github://earthly/lunar-lib/collectors/my-plugin@bender/my-feature-branch
+```
+
+**THIS IS FOR TESTING ONLY.** When you are done testing:
+1. Revert the `uses:` reference back to a stable ref (`@main` or `@v1.0.x`)
+2. Or remove the collector/policy entry entirely if it wasn't there before your test
+3. Commit and push the revert to main
+4. Verify the build passes
+
+**If you forget this step, the build WILL break** when the branch is deleted
+(e.g. after PR merge). This is exactly what happened with the dotnet plugin on
+`bender/eng-486-dotnet` — the branch was cleaned up but the config still
+referenced it, breaking all manifest syncs for pantalasa/lunar.
+
+## Cross-Org GitHub Access
+
+The default `GH_TOKEN` only works for the primary org (earthly). For other orgs:
+```bash
+TOKEN=$(bender-gh-token pantalasa)
+TOKEN=$(bender-gh-token pantalasa-cronos)
+TOKEN=$(bender-gh-token brandonSc)
+```
+Use these tokens for API calls and git operations against repos in those orgs.
+
+## Contributing to Hub Manifests (lunar-lib)
+
+When adding or modifying collectors/policies in `earthly/lunar-lib`:
+1. The hub org repos (`pantalasa/lunar`, etc.) reference plugins by version tag or branch
+2. Most plugins use `@v1.0.5` (or whatever the latest release is)
+3. New plugins not yet in a release tag should use `@main`
+4. **The build in the org repo MUST pass** for changes to reach the hub
+5. After merging your PR to lunar-lib, verify that downstream org repos still build
+
+## Common Gotchas
+
+- **Branch names with slashes** (like `bender/foo`) can cause issues in plugin
+  refs because the `@` separator is ambiguous. The sync tool may double the ref.
+  Prefer version tags over branch refs in production configs.
+
+- **Repos that look missing** may just need the right org token. Always try
+  `bender-gh-token <org>` before concluding a repo doesn't exist.
+
+---
+
+**Remember: If you get stuck on something not covered here, ADD IT before you
+finish your session.** Future you will thank present you. Or at least be
+marginally less confused.

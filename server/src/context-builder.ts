@@ -14,12 +14,16 @@ export function buildNewSessionPrompt(
   const identity = getIdentityPrompt();
   const playbook = loadPlaybook();
   const journal = loadJournal();
+  const workerContext = loadWorkerContext();
 
   const parts = [
     identity,
     "",
     "## Playbook",
     playbook,
+    "",
+    "## Worker Context (Operational Notes)",
+    workerContext,
     "",
     "## Journal of Learnings",
     journal,
@@ -180,12 +184,16 @@ export function buildCheckpointedPrompt(
   const identity = getIdentityPrompt();
   const playbook = loadPlaybook();
   const journal = loadJournal();
+  const workerContext = loadWorkerContext();
 
   const parts = [
     identity,
     "",
     "## Playbook",
     playbook,
+    "",
+    "## Worker Context (Operational Notes)",
+    workerContext,
     "",
     "## Journal of Learnings",
     journal,
@@ -254,6 +262,21 @@ function loadPlaybook(): string {
   }
 
   return "(playbook not found — check ~/repos/lunar-lib/.ai-implementation/)";
+}
+
+function loadWorkerContext(): string {
+  const paths = [
+    resolve(REPOS_DIR, "..", "bender", "worker-context.md"),
+    resolve(REPOS_DIR, "worker-context.md"),
+  ];
+
+  for (const p of paths) {
+    if (existsSync(p)) {
+      return readFileSync(p, "utf-8");
+    }
+  }
+
+  return "(no worker context file found — create ~/bender/worker-context.md)";
 }
 
 function loadJournal(): string {
