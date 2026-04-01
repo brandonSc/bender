@@ -613,7 +613,7 @@ Guidelines:
 
 IMPORTANT — Thread context: Each thread is tied to a specific PR/task (marked "THIS THREAD" above). If the user mentions a different PR or repo than the one this thread is for, politely point it out: "Hey, this thread is for PR #X on repo Y — did you mean to ask in the other thread?" Don't silently work on the wrong PR.
 - Plans should be concise numbered steps, not essays.
-- For plan replies: end your reply by asking for permission to proceed (naturally, in your own words — don't always use the same phrase).
+- **CRITICAL for plan replies: You MUST end your reply with a question asking for permission to proceed.** Examples: "Want me to start?", "Sound good?", "Should I run with this?", "Ready to roll?" — vary it, but ALWAYS ask. The system waits for user approval before dispatching work.
 
 If runtime status shows work in progress, report it accurately.`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
@@ -650,9 +650,13 @@ If runtime status shows work in progress, report it accurately.`,
 
       if (action === "plan") {
         // Post the plan and wait for approval
-        const fullReply = planText
+        let fullReply = planText
           ? `${cleanReply}\n\n${planText}`
           : cleanReply;
+        // Ensure the plan always ends with a question — fallback if Sonnet forgot
+        if (!fullReply.trimEnd().endsWith("?")) {
+          fullReply += "\n\nGo ahead?";
+        }
         const ackTs = await slackPostMessage(event.slack_channel!, fullReply, event.slack_thread_ts);
         recordMessage(event.slack_channel!, "bender", fullReply, `reply:${event.id}`);
         const planThreadTs = event.slack_thread_ts ?? ackTs;
