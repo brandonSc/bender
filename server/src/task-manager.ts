@@ -18,7 +18,7 @@ import {
 import { postMessage as slackPostMessage, getThreadMessages, getChannelHistory } from "./slack-client.js";
 import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
-import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
+import { storePlan, getPendingPlan, consumePlan, isApproval, storeWorkContinuation, getWorkContinuation, consumeWorkContinuation } from "./slack-plans.js";
 
 async function getGitHubToken(repoOrg?: string): Promise<string | undefined> {
   try {
@@ -468,6 +468,23 @@ export class TaskManager {
       }
     }
 
+    // Check if inner Claude asked a question and is waiting for the user's reply
+    if (threadTs && event.comment_body) {
+      const continuation = getWorkContinuation(event.slack_channel!, threadTs);
+      if (continuation) {
+        console.log(`[W${worker.id}] Work continuation — inner Claude was waiting for input`);
+        const workEvent = consumeWorkContinuation(event.slack_channel!, threadTs);
+        if (workEvent) {
+          // Append the user's reply so Claude gets the answer
+          workEvent.comment_body = (workEvent.comment_body ?? "") +
+            `\n\n## User's Reply\n${event.comment_body}`;
+          workEvent.slack_thread_ts = threadTs;
+          await this.handleSlackWork(worker, workEvent);
+        }
+        return;
+      }
+    }
+
     const sessions = listActiveSessions();
     const sessionSummary = sessions
       .map((s) => {
@@ -830,6 +847,19 @@ If runtime status shows work in progress, report it accurately.`,
     }
 
     const durationSec = Math.round(claudeResult.durationMs / 1000);
+
+    // Detect if inner Claude asked a question / proposed a plan and is waiting for input.
+    // If so, store a continuation so the user's next reply bypasses the chat classifier.
+    if (claudeResult.exitCode === 0 && event.slack_channel && event.slack_thread_ts) {
+      const output = (claudeResult.stdout || "").trim();
+      const lastLine = output.split("\n").pop()?.trim() ?? "";
+      const looksLikeQuestion = /\?$/.test(lastLine)
+        || /want me to|go ahead|what do you think|let me know|thoughts\??/i.test(lastLine);
+      if (looksLikeQuestion) {
+        storeWorkContinuation(event.slack_channel, event.slack_thread_ts, event, output);
+        console.log(`[W${worker.id}] Inner Claude asked a question — storing continuation for thread`);
+      }
+    }
 
     // Only post server-side for errors/timeouts
     if (claudeResult.killed && event.slack_channel) {
