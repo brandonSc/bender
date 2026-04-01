@@ -797,25 +797,26 @@ If runtime status shows work in progress, report it accurately.`,
       `## Phase Rules`,
       ...((() => {
         const phase = activeSession?.phase ?? "starting";
-        const isSpecPhase = phase === "starting" || phase === "spec_review";
-        const title = activeSession?.ticket_title ?? "";
-        const isSpecPR = /\bspec\b/i.test(title);
-        if (isSpecPhase || isSpecPR) {
+        const repo = activeSession?.repo ?? "";
+        const isLunarLibPlugin = repo === "earthly/lunar-lib"
+          && /\b(collector|policy|spec)\b/i.test(activeSession?.ticket_title ?? "");
+
+        if (isLunarLibPlugin && (phase === "spec_review" || phase === "starting")) {
           return [
-            `**THIS IS A SPEC-ONLY PHASE.** The PR is in "${phase}" and/or marked as spec-only.`,
+            `**SPEC-ONLY PHASE (lunar-lib plugin workflow).** This PR is in "${phase}".`,
             `Do NOT write implementation code (no main.sh, no Python policy scripts, no Dockerfiles).`,
             `Only create/update: YAML manifests, READMEs, example Component JSON, SVG icons, ai-context docs.`,
             `Implementation comes later after reviewers give the go-ahead.`,
           ];
         }
-        if (phase === "implementing") {
+        if (isLunarLibPlugin && phase === "implementing") {
           return [
             `Phase: implementing — reviewers approved the spec. Now write the implementation code.`,
             `Follow the spec/manifests that are already in the PR as your guide.`,
           ];
         }
         return [
-          `Phase: ${phase}. Proceed with the work as discussed.`,
+          `Phase: ${phase}. No special restrictions — do whatever the task requires.`,
         ];
       })()),
       "",
