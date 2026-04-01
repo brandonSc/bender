@@ -59,11 +59,12 @@ export async function addReaction(
 export async function getThreadMessages(
   channel: string,
   threadTs: string,
+  limit = 50,
 ): Promise<Array<{ user: string; text: string; ts: string }>> {
   const data = await slackApi("conversations.replies", {
     channel,
     ts: threadTs,
-    limit: 20,
+    limit,
   });
   return (data.messages as Array<{ user: string; text: string; ts: string }>) ?? [];
 }
