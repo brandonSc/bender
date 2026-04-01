@@ -224,11 +224,13 @@ export class TaskManager {
     );
 
     const idx = this.queue.findIndex((item) => {
-      // For Slack events, use the channel as the "ticket" to prevent parallel
-      // work on the same channel — follow-ups queue behind running work.
+      // For Slack events, serialize by thread (not channel) so chat can proceed
+      // on other workers while a long-running work invocation runs in a thread.
       if (item.event.source === "slack" && item.event.slack_channel) {
-        const slackKey = `slack:${item.event.slack_channel}`;
-        return !busyTickets.has(slackKey);
+        const threadKey = item.event.slack_thread_ts
+          ? `slack:${item.event.slack_channel}:${item.event.slack_thread_ts}`
+          : `slack:${item.event.slack_channel}`;
+        return !busyTickets.has(threadKey);
       }
       const ticketId = item.event.ticket_id
         ?? this.resolveTicketForPR(item.event.pr_number);
@@ -254,8 +256,10 @@ export class TaskManager {
     // Slack messages — single smart call that decides and acts
     if (event.source === "slack" && event.slack_channel) {
       worker.busy = true;
-      // Include channel AND message snippet so status checks can report what's happening
-      worker.current_ticket = `slack:${event.slack_channel}`;
+      const threadKey = event.slack_thread_ts
+        ? `slack:${event.slack_channel}:${event.slack_thread_ts}`
+        : `slack:${event.slack_channel}`;
+      worker.current_ticket = threadKey;
       worker.current_description = event.comment_body?.slice(0, 120) ?? "slack message";
       console.log(`[W${worker.id}] → slack ${event.slack_channel} "${event.comment_body?.slice(0, 50)}"`);
       try {
