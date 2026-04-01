@@ -50,6 +50,10 @@ export function consumePlan(
   const plan = pendingPlans.get(key);
   if (!plan) return null;
   pendingPlans.delete(key);
+  // Append the approved plan to the event body so Claude has it
+  if (plan.plan && plan.event.comment_body) {
+    plan.event.comment_body += `\n\n## Approved Plan\n${plan.plan}`;
+  }
   return plan.event;
 }
 

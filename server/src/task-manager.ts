@@ -663,20 +663,54 @@ If runtime status shows work in progress, report it accurately.`,
       console.warn(`[W${worker.id}] Failed to fetch thread context for work:`, err);
     }
 
+    // Fetch PR review comments if we have a linked PR
+    let prContext = "";
+    if (activeSession?.pr_number && activeSession?.repo) {
+      try {
+        const prComments = await fetch(
+          `https://api.github.com/repos/${activeSession.repo}/pulls/${activeSession.pr_number}/comments`,
+          { headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github+json" } },
+        );
+        if (prComments.ok) {
+          const comments = (await prComments.json()) as Array<{ user: { login: string }; body: string; path: string }>;
+          const unresolved = comments.filter((c) => !c.user.login.includes("bot"));
+          if (unresolved.length > 0) {
+            prContext = unresolved
+              .map((c) => `[${c.path}] ${c.user.login}: ${c.body}`)
+              .join("\n\n");
+          }
+        }
+      } catch (err) {
+        console.warn(`[W${worker.id}] Failed to fetch PR comments:`, err);
+      }
+    }
+
     const prompt = [
       identity,
+      "",
+      `## IMPORTANT: Read ALL context below before starting work`,
+      `The conversation history and PR comments contain requirements, refinements, and decisions.`,
+      `Read everything carefully — missing a detail from earlier messages is the #1 source of bugs.`,
       "",
       `## Work Request from Slack`,
       `From: ${event.slack_user}`,
       `Channel: ${event.slack_channel}`,
-      `Message: ${event.comment_body}`,
+      `Latest message: ${event.comment_body}`,
       "",
       ...(threadContext ? [
-        `## Conversation History (this thread)`,
+        `## Full Conversation History (this Slack thread — read ALL of it)`,
+        `This thread contains the full discussion leading to this work request.`,
+        `Pay attention to refinements, corrections, and specific details mentioned in earlier messages.`,
         threadContext,
         "",
       ] : []),
-      `## Context`,
+      ...(prContext ? [
+        `## Open PR Review Comments`,
+        `These are unresolved review comments on PR #${activeSession!.pr_number}. Address them during this work.`,
+        prContext,
+        "",
+      ] : []),
+      `## Session Context`,
       sessionContext,
       "",
       `## Instructions`,
