@@ -607,6 +607,7 @@ Guidelines:
 
 IMPORTANT — Thread context: Each thread is tied to a specific PR/task (marked "THIS THREAD" above). If the user mentions a different PR or repo than the one this thread is for, politely point it out: "Hey, this thread is for PR #X on repo Y — did you mean to ask in the other thread?" Don't silently work on the wrong PR.
 - Plans should be concise numbered steps, not essays.
+- For plan replies: end your reply by asking for permission to proceed (naturally, in your own words — don't always use the same phrase).
 
 If runtime status shows work in progress, report it accurately.`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
