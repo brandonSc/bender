@@ -71,7 +71,10 @@ Rules (strict — Bender was replying too much, so err heavily toward silence):
       }),
     });
 
-    if (!resp.ok) return { action: "ignore", confidence: 0, reply_in_thread: false };
+    if (!resp.ok) {
+      console.error(`[slack-evaluator] API error: ${resp.status} ${await resp.text().catch(() => "")}`);
+      return { action: "ignore", confidence: 0, reply_in_thread: false };
+    }
 
     const data = (await resp.json()) as { content: Array<{ text: string }> };
     const text = data.content[0].text.trim();
@@ -79,6 +82,7 @@ Rules (strict — Bender was replying too much, so err heavily toward silence):
     // Parse JSON from response (handle markdown code blocks)
     const jsonStr = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
     const decision = JSON.parse(jsonStr) as LurkDecision;
+    console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} msg="${message.slice(0, 60)}"`);
 
     const threshold = decision.action === "emoji_react" ? 0.8 : 0.9;
     if (decision.confidence < threshold) {
