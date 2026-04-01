@@ -219,3 +219,163 @@ export async function invokeClaude(
     });
   });
 }
+
+export interface SpawnedClaude {
+  pid: number;
+  logFile: string;
+}
+
+/**
+ * Spawn Claude Code CLI in the background (non-blocking).
+ * Returns immediately with the PID and log file path.
+ * Calls onComplete when the process exits.
+ */
+export function spawnClaude(
+  session: Session,
+  prompt: string,
+  config: Config,
+  onComplete: (result: ClaudeResult) => void,
+  githubToken?: string,
+  extraEnv?: Record<string, string>,
+): SpawnedClaude {
+  const args: string[] = [];
+  const isResume = !!session.claude_session_id;
+
+  args.push("--model", config.claude.model);
+  if (isResume) {
+    args.push("--resume", session.claude_session_id!);
+  }
+
+  args.push("--dangerously-skip-permissions");
+  args.push("--effort", "max");
+  args.push("--output-format", "stream-json");
+  args.push("--verbose");
+  if (config.claude.max_turns > 0) {
+    args.push("--max-turns", config.claude.max_turns.toString());
+  }
+  args.push("-p", prompt);
+
+  const reposDir = resolve(homedir(), "repos");
+  mkdirSync(reposDir, { recursive: true });
+
+  const lunarLibDir = resolve(reposDir, "lunar-lib");
+  let cwd: string;
+  if (existsSync(session.worktree_path)) {
+    cwd = session.worktree_path;
+  } else if (existsSync(lunarLibDir)) {
+    cwd = lunarLibDir;
+  } else {
+    cwd = reposDir;
+  }
+
+  const logsDir = resolve(getBenderDir(), "logs");
+  mkdirSync(logsDir, { recursive: true });
+  const logFile = resolve(
+    logsDir,
+    `${new Date().toISOString().split("T")[0]}-${session.ticket_id}-${Date.now()}.log`,
+  );
+
+  appendFileSync(logFile, `=== Claude Invocation (${isResume ? "RESUME " + session.claude_session_id : "NEW"}) ===\n`);
+  appendFileSync(logFile, `Time: ${new Date().toISOString()}\n`);
+  appendFileSync(logFile, `Ticket: ${session.ticket_id}\n`);
+  appendFileSync(logFile, `CWD: ${cwd}\n`);
+  appendFileSync(logFile, `Model: ${config.claude.model}\n\n`);
+
+  const startTime = Date.now();
+  const child = spawn("claude", args, {
+    cwd,
+    env: {
+      ...process.env,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      ...(githubToken ? { GH_TOKEN: githubToken, GITHUB_TOKEN: githubToken } : {}),
+      BENDER_TICKET_ID: session.ticket_id,
+      BENDER_SESSION_DIR: resolve(getBenderDir(), "sessions"),
+      ...(session.agent_session_id ? {
+        BENDER_AGENT_SESSION_ID: session.agent_session_id,
+        BENDER_LINEAR_TOKEN: getLinearToken() ?? "",
+      } : {}),
+      ...(extraEnv ?? {}),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let sessionId = session.claude_session_id;
+  let textOutput = "";
+  let stderr = "";
+  let killed = false;
+
+  let lineBuf = "";
+  child.stdout.on("data", (data: Buffer) => {
+    const chunk = data.toString();
+    appendFileSync(logFile, chunk);
+    lineBuf += chunk;
+    const lines = lineBuf.split("\n");
+    lineBuf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const evt = JSON.parse(line);
+        if (evt.session_id) sessionId = evt.session_id;
+        if (evt.type === "assistant" && evt.message?.content) {
+          let msgText = "";
+          for (const block of evt.message.content) {
+            if (block.type === "text") msgText += block.text;
+          }
+          if (msgText) textOutput = msgText;
+          for (const block of evt.message.content) {
+            if (block.type === "tool_use") {
+              appendFileSync(logFile, `[tool] ${block.name}: ${JSON.stringify(block.input?.command ?? block.input?.path ?? "").slice(0, 120)}\n`);
+            }
+          }
+        }
+        if (evt.type === "result" && evt.result) textOutput = evt.result;
+      } catch {}
+    }
+  });
+
+  child.stderr.on("data", (data: Buffer) => {
+    stderr += data.toString();
+    appendFileSync(logFile, data.toString());
+  });
+
+  const timeout = setTimeout(() => {
+    killed = true;
+    child.kill("SIGTERM");
+    appendFileSync(logFile, `\n=== KILLED: exceeded ${config.circuit_breaker.max_duration_minutes}min limit ===\n`);
+  }, config.circuit_breaker.max_duration_minutes * 60 * 1000);
+
+  child.on("close", (code) => {
+    clearTimeout(timeout);
+    const durationMs = Date.now() - startTime;
+    appendFileSync(logFile, `\n--- Result ---\nExit: ${code} Duration: ${durationMs}ms Killed: ${killed}\nSession: ${sessionId ?? "none"}\n`);
+
+    if (!sessionId) {
+      const match = stderr.match(/session[:\s]+([a-f0-9-]{36})/i);
+      if (match) sessionId = match[1];
+    }
+
+    onComplete({
+      exitCode: code ?? 1,
+      sessionId,
+      stdout: textOutput,
+      stderr,
+      durationMs,
+      killed,
+    });
+  });
+
+  child.on("error", (err: Error) => {
+    clearTimeout(timeout);
+    appendFileSync(logFile, `\n--- Spawn Error ---\n${err.message}\n`);
+    onComplete({
+      exitCode: 1,
+      sessionId: session.claude_session_id,
+      stdout: "",
+      stderr: err.message,
+      durationMs: Date.now() - startTime,
+      killed: false,
+    });
+  });
+
+  return { pid: child.pid!, logFile };
+}
