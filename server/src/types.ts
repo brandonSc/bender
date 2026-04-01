@@ -115,6 +115,9 @@ export interface TaskEvent {
   slack_thread_ts?: string;
   slack_user?: string;
 
+  // Context summary from Sonnet classifier (for work dispatch)
+  context_summary?: string;
+
   // Raw payload for the executor
   raw: unknown;
 }

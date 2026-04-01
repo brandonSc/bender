@@ -115,15 +115,14 @@ export function buildResumedPrompt(
     );
   }
 
-  // If session has a Slack thread, tell Claude to check it for context
+  // If session has a Slack thread, tell Claude to check it for updates
   if (session.slack_channel && session.slack_thread_ts) {
     parts.push(
       "",
-      "## Slack Thread Context",
-      `This task has an associated Slack thread (channel: ${session.slack_channel}, thread: ${session.slack_thread_ts}).`,
-      "The thread may contain requirements, refinements, and decisions that aren't in the PR or ticket.",
-      "If this is a resumed task, check the thread for any new messages since your last run:",
-      `  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/conversations.replies?channel=${session.slack_channel}&ts=${session.slack_thread_ts}&limit=30" | jq '.messages[] | {user, text}'`,
+      "## Slack Thread",
+      `This task has a Slack thread with the user. Before making changes, check for new messages:`,
+      `  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/conversations.replies?channel=${session.slack_channel}&ts=${session.slack_thread_ts}&limit=30" | jq '.messages[-5:] | .[] | {user, text}'`,
+      `Look for corrections, new requirements, or "spec only" / phase constraints.`,
     );
   }
 
