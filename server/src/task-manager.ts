@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Config, TaskEvent, Worker, Session } from "./types.js";
@@ -18,7 +18,42 @@ import {
 import { postMessage as slackPostMessage, getThreadMessages, getChannelHistory } from "./slack-client.js";
 import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
-import { storePlan, getPendingPlan, consumePlan, isApproval, storeWorkContinuation, getWorkContinuation, consumeWorkContinuation } from "./slack-plans.js";
+import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
+import { getBenderDir } from "./config.js";
+
+interface WaitingState {
+  channel: string;
+  thread_ts: string;
+  ticket_id: string;
+  question: string;
+  created_at: number;
+}
+
+function waitingFilePath(channel: string, threadTs: string): string {
+  const safeKey = `${channel}:${threadTs}`.replace(/[/:]/g, "_");
+  return resolve(getBenderDir(), "waiting", `${safeKey}.json`);
+}
+
+function readWaitingState(channel: string, threadTs: string): WaitingState | null {
+  const fp = waitingFilePath(channel, threadTs);
+  if (!existsSync(fp)) return null;
+  try {
+    const state = JSON.parse(readFileSync(fp, "utf-8")) as WaitingState;
+    const ageMs = Date.now() - state.created_at * 1000;
+    if (ageMs > 60 * 60 * 1000) {
+      unlinkSync(fp);
+      return null;
+    }
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function clearWaitingState(channel: string, threadTs: string): void {
+  const fp = waitingFilePath(channel, threadTs);
+  try { if (existsSync(fp)) unlinkSync(fp); } catch {}
+}
 
 async function getGitHubToken(repoOrg?: string): Promise<string | undefined> {
   try {
@@ -468,20 +503,26 @@ export class TaskManager {
       }
     }
 
-    // Check if inner Claude asked a question and is waiting for the user's reply
-    if (threadTs && event.comment_body) {
-      const continuation = getWorkContinuation(event.slack_channel!, threadTs);
-      if (continuation) {
-        console.log(`[W${worker.id}] Work continuation — inner Claude was waiting for input`);
-        const workEvent = consumeWorkContinuation(event.slack_channel!, threadTs);
-        if (workEvent) {
-          // Append the user's reply so Claude gets the answer
-          workEvent.comment_body = (workEvent.comment_body ?? "") +
-            `\n\n## User's Reply\n${event.comment_body}`;
-          workEvent.slack_thread_ts = threadTs;
-          await this.handleSlackWork(worker, workEvent);
+    // Check if inner Claude is waiting for a reply (written by bender-await-reply script)
+    if (threadTs && event.comment_body && event.slack_channel) {
+      const waitingState = readWaitingState(event.slack_channel, threadTs);
+      if (waitingState) {
+        // "bender: ..." prefix → route to chat classifier, not the worker
+        const isBenderDirect = /^bender\s*:/i.test(event.comment_body.trim());
+        if (isBenderDirect) {
+          // Strip the prefix and let it fall through to the Sonnet classifier
+          event.comment_body = event.comment_body.replace(/^bender\s*:\s*/i, "").trim();
+          clearWaitingState(event.slack_channel, threadTs);
+          console.log(`[W${worker.id}] "bender:" prefix — routing to chat, clearing waiting state`);
+        } else {
+          // Route reply to the worker
+          console.log(`[W${worker.id}] Worker waiting — routing reply to handleSlackWork`);
+          clearWaitingState(event.slack_channel, threadTs);
+          event.comment_body = `## Worker's Question\n${waitingState.question}\n\n## User's Reply\n${event.comment_body}`;
+          event.slack_thread_ts = threadTs;
+          await this.handleSlackWork(worker, event);
+          return;
         }
-        return;
       }
     }
 
@@ -762,10 +803,16 @@ If runtime status shows work in progress, report it accurately.`,
       `Stay in character as Bender.`,
       ``,
       `## Communication`,
-      `Post updates and questions to the Slack thread you were invoked from:`,
+      `Post progress updates to the Slack thread:`,
       `  curl -s -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" -d '{"channel":"'$BENDER_REPLY_CHANNEL'","thread_ts":"'$BENDER_REPLY_THREAD'","text":"your message"}'`,
-      `- Post a brief update when you hit milestones or finish.`,
-      `- If you need clarification, ask in the thread and then continue with your best guess. Don't block.`,
+      ``,
+      `**If you need user input** (clarification, approval, a choice between options):`,
+      `  bender-await-reply "Your question here"`,
+      `This posts your question to the thread with instructions for the user, then EXIT (exit 0).`,
+      `The server will route their reply back to a new worker invocation with full context.`,
+      `Do NOT continue working after calling bender-await-reply — just exit and wait.`,
+      ``,
+      `- Post brief updates when you hit milestones or finish.`,
       `- If asked to message someone in a specific channel, do it directly.`,
       `- If the user's message contains multiple requests, address all of them.`,
       ``,
@@ -863,18 +910,8 @@ If runtime status shows work in progress, report it accurately.`,
 
     const durationSec = Math.round(claudeResult.durationMs / 1000);
 
-    // Detect if inner Claude asked a question / proposed a plan and is waiting for input.
-    // If so, store a continuation so the user's next reply bypasses the chat classifier.
-    if (claudeResult.exitCode === 0 && event.slack_channel && event.slack_thread_ts) {
-      const output = (claudeResult.stdout || "").trim();
-      const lastLine = output.split("\n").pop()?.trim() ?? "";
-      const looksLikeQuestion = /\?$/.test(lastLine)
-        || /want me to|go ahead|what do you think|let me know|thoughts\??/i.test(lastLine);
-      if (looksLikeQuestion) {
-        storeWorkContinuation(event.slack_channel, event.slack_thread_ts, event, output);
-        console.log(`[W${worker.id}] Inner Claude asked a question — storing continuation for thread`);
-      }
-    }
+    // Waiting state is now handled by bender-await-reply script (writes file to ~/.bender/waiting/).
+    // No regex detection needed — inner Claude explicitly declares when it's waiting.
 
     // Only post server-side for errors/timeouts
     if (claudeResult.killed && event.slack_channel) {
