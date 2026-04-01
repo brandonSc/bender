@@ -27,6 +27,28 @@ async function slackApi(
   return data;
 }
 
+async function slackGet(
+  method: string,
+  params: Record<string, string | number>,
+): Promise<Record<string, unknown>> {
+  const token = getToken();
+  if (!token) throw new Error("SLACK_BOT_TOKEN not set");
+
+  const qs = new URLSearchParams(
+    Object.entries(params).map(([k, v]) => [k, String(v)]),
+  ).toString();
+
+  const resp = await fetch(`${SLACK_API}/${method}?${qs}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const data = (await resp.json()) as Record<string, unknown>;
+  if (!data.ok) {
+    console.error(`[slack] ${method} failed:`, data.error);
+  }
+  return data;
+}
+
 export async function postMessage(
   channel: string,
   text: string,
@@ -61,7 +83,7 @@ export async function getThreadMessages(
   threadTs: string,
   limit = 50,
 ): Promise<Array<{ user: string; text: string; ts: string }>> {
-  const data = await slackApi("conversations.replies", {
+  const data = await slackGet("conversations.replies", {
     channel,
     ts: threadTs,
     limit,
@@ -73,7 +95,7 @@ export async function getChannelHistory(
   channel: string,
   limit = 10,
 ): Promise<Array<{ user: string; text: string; ts: string }>> {
-  const data = await slackApi("conversations.history", {
+  const data = await slackGet("conversations.history", {
     channel,
     limit,
   });
