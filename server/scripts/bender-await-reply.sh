@@ -25,7 +25,7 @@ if [ -z "$BENDER_REPLY_CHANNEL" ] || [ -z "$BENDER_REPLY_THREAD" ] || [ -z "$SLA
   exit 1
 fi
 
-FOOTER="_Reply here to answer the worker. Say_ \`bender: your message\` _to talk to Bender directly instead._"
+FOOTER="_Reply here to answer the worker. Say_ \`bender: your message\` _to talk to parent Bender directly instead._"
 FULL_MESSAGE="${MESSAGE}
 
 ${FOOTER}"
