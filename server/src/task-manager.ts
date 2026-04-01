@@ -120,11 +120,15 @@ async function benderSpeak(situation: string): Promise<string> {
         }],
       }),
     });
-    if (!resp.ok) throw new Error(`${resp.status}`);
+    if (!resp.ok) {
+      console.error(`[benderSpeak] Haiku API error: ${resp.status} ${await resp.text().catch(() => "")}`);
+      return "On it.";
+    }
     const data = await resp.json() as { content: Array<{ text: string }> };
     return data.content[0].text;
-  } catch {
-    return situation;
+  } catch (err) {
+    console.error("[benderSpeak] Error:", err);
+    return "On it.";
   }
 }
 
