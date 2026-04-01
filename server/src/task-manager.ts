@@ -596,14 +596,9 @@ You have three modes:
 3. WORK — someone said "yes/go/do it" to a plan, OR the task is dead simple (one-liner, trivial fix). Execute immediately.
 
 Reply in JSON:
-{"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)", "context_summary": "...", "workflow": "spec_first" | "implementation" | "freeform"}
+{"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)", "context_summary": "..."}
 
-For plan/work actions:
-- context_summary: Capture ALL relevant decisions, requirements, and constraints from the conversation — both this thread AND prior interactions. The worker will only see this summary, not the raw conversation. Include specific details: file paths, naming decisions, schema choices, things the user corrected or emphasized.
-- workflow: Classify the task's workflow mode based on what the user is actually asking for:
-  - "spec_first" — Creating a new lunar-lib collector/policy following the spec-first process (YAML manifest, README, examples first, implementation later after reviewer approval). Worker must NOT write implementation code.
-  - "implementation" — Reviewers approved a spec and now it's time to write the actual code (main.sh, Python policy scripts, Dockerfiles, etc.). Or adding implementation to an existing plugin.
-  - "freeform" — Everything else: doc updates, repo setup, CI fixes, investigations, non-plugin work, work outside lunar-lib. No restrictions on what the worker can do.
+For plan/work actions, write a context_summary that captures ALL relevant decisions, requirements, and constraints from the conversation — both this thread AND prior interactions. The worker will only see this summary, not the raw conversation. Include specific details: file paths, naming decisions, schema choices, things the user corrected or emphasized. If the user mentioned workflow constraints (like "spec only", "don't implement yet", "just docs"), include those prominently.
 
 Guidelines:
 - "What's your status?" → chat
@@ -633,15 +628,13 @@ If runtime status shows work in progress, report it accurately.`,
       let cleanReply = rawReply;
       let planText = "";
       let contextSummary = "";
-      let workflow = "freeform";
       try {
         const jsonStr = rawReply.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string; context_summary?: string; workflow?: string };
+        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string; context_summary?: string };
         action = parsed.action;
         cleanReply = parsed.reply;
         planText = parsed.plan ?? "";
         contextSummary = parsed.context_summary ?? "";
-        workflow = parsed.workflow ?? "freeform";
       } catch {
         action = "chat";
         cleanReply = rawReply;
@@ -650,7 +643,6 @@ If runtime status shows work in progress, report it accurately.`,
       if (contextSummary) {
         event.context_summary = contextSummary;
       }
-      event.workflow = workflow as TaskEvent["workflow"];
 
       if (action === "plan") {
         // Post the plan and wait for approval
@@ -803,27 +795,14 @@ If runtime status shows work in progress, report it accurately.`,
         activeSession.pr_number ? `PR: #${activeSession.pr_number} on ${activeSession.repo}` : "",
       ].filter(Boolean) : []),
       "",
-      `## Workflow Mode`,
-      ...((() => {
-        const wf = event.workflow ?? "freeform";
-        if (wf === "spec_first") {
-          return [
-            `**SPEC-FIRST WORKFLOW.** You are creating/updating a plugin spec for review.`,
-            `Do NOT write implementation code (no main.sh, no Python policy scripts, no Dockerfiles).`,
-            `Only create/update: YAML manifests, READMEs, example Component JSON, SVG icons, ai-context docs.`,
-            `Implementation comes later after reviewers approve the spec and give the go-ahead.`,
-          ];
-        }
-        if (wf === "implementation") {
-          return [
-            `**IMPLEMENTATION WORKFLOW.** The spec has been approved — now write the actual code.`,
-            `Follow the spec/manifests that are already in the PR as your guide.`,
-          ];
-        }
-        return [
-          `**FREEFORM.** No workflow restrictions — do whatever the task requires.`,
-        ];
-      })()),
+      `## Workflow`,
+      `Before writing code, check if the repo has workflow documentation:`,
+      `- Look for \`.ai-implementation/\` or \`ai-context/\` directories — they define how work should be done`,
+      `- Read any playbook, conventions, or workflow docs you find`,
+      `- Determine if this task follows a structured workflow (like spec-first for new plugins) or is freeform`,
+      `- If the repo has a spec-first workflow and this is a new plugin, follow it: spec/manifests first, no implementation until approved`,
+      `- If the context summary mentions workflow constraints (e.g. "spec only"), respect them`,
+      `- If there are no workflow docs or the task doesn't fit a structured workflow, just do the work`,
       "",
       `## Instructions`,
       `A plan was already discussed and approved in the conversation above. Your job is to implement it.`,
