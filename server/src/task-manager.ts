@@ -668,15 +668,16 @@ If runtime status shows work in progress, report it accurately.`,
         }
         console.log(`[W${worker.id}] ← slack plan posted, waiting for approval`);
       } else if (action === "work") {
-        // Post ack and dispatch immediately
+        // Post ack — if not already in a thread, this creates one (inner Claude posts updates here)
         const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
         recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+        // Use existing thread, or start a new thread on the ack message
         const workThreadTs = event.slack_thread_ts ?? ackTs;
         if (workThreadTs) {
           const { trackThread } = await import("./slack-threads.js");
           trackThread(`${event.slack_channel}:${workThreadTs}`);
         }
-        console.log(`[W${worker.id}] ← slack ack+work (${cleanReply.length} chars)`);
+        console.log(`[W${worker.id}] ← slack ack+work (${cleanReply.length} chars), thread=${workThreadTs}`);
         event.slack_thread_ts = workThreadTs;
         await this.handleSlackWork(worker, event);
       } else {
