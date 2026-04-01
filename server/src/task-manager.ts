@@ -3,8 +3,18 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Config, TaskEvent, Worker, Session } from "./types.js";
 import { routeEvent, type RouteResult } from "./router.js";
-import { saveSession, findSessionForEvent, listActiveSessions } from "./session-store.js";
-import { invokeClaude } from "./claude-executor.js";
+import { saveSession, findSessionForEvent, listActiveSessions, createSession, getSessionByTicket } from "./session-store.js";
+import { invokeClaude, spawnClaude } from "./claude-executor.js";
+import {
+  saveWorker,
+  getRunningWorkerForThread,
+  cancelWorker,
+  listRunningWorkers,
+  getWorkerSummary,
+  getWorkerLogTail,
+  cleanupWorkers,
+  type WorkerState,
+} from "./worker-tracker.js";
 import {
   buildNewSessionPrompt,
   buildResumedPrompt,
@@ -544,10 +554,25 @@ export class TaskManager {
       })
       .join("\n") || "No active work.";
 
-    const busyWorkers = this.workers.filter((w) => w.busy && w.id !== worker.id);
-    const workerStatus = busyWorkers.length > 0
-      ? `IMPORTANT — Work already in progress on other workers:\n${busyWorkers.map((w) => `  Worker ${w.id}: ${w.current_description ?? w.current_ticket ?? "unknown task"}`).join("\n")}\nIf the user asks for status, tell them work IS running.`
-      : "All other workers idle — no background work in progress.";
+    // Check for running background workers
+    const runningWorkers = listRunningWorkers();
+    const threadWorker = event.slack_thread_ts && event.slack_channel
+      ? getRunningWorkerForThread(event.slack_channel, event.slack_thread_ts)
+      : null;
+
+    let workerStatus = "";
+    if (threadWorker) {
+      const elapsed = Math.round((Date.now() - new Date(threadWorker.startedAt).getTime()) / 1000);
+      const lastTools = getWorkerLogTail(threadWorker, 3);
+      workerStatus = `**A worker is currently running in THIS thread** (${Math.floor(elapsed / 60)}m${elapsed % 60}s):\n  Task: "${threadWorker.description}"\n  Recent activity:\n${lastTools}`;
+    } else if (runningWorkers.length > 0) {
+      workerStatus = `Background workers running:\n${runningWorkers.map((w) => {
+        const elapsed = Math.round((Date.now() - new Date(w.startedAt).getTime()) / 1000);
+        return `  Thread ${w.threadTs}: "${w.description}" (${Math.floor(elapsed / 60)}m${elapsed % 60}s)`;
+      }).join("\n")}`;
+    } else {
+      workerStatus = "No background workers running.";
+    }
 
     // Fetch live conversation context from Slack
     let conversationContext = "";
@@ -589,39 +614,45 @@ export class TaskManager {
           max_tokens: 1500,
           system: `You are Bender from Futurama, a coding agent on the Earthly team. Confident, concise, a bit cocky. No Claude-isms. No action narration.
 
-Your active work:
+Your active sessions:
 ${sessionSummary}
 
-Runtime status: ${workerStatus}
+${workerStatus}
 
 ${conversationContext ? `## Conversation Context\n${conversationContext}\n` : ""}
 ${userHistory ? `## Previous interactions with this user (across channels):\n${userHistory}\n` : ""}
-Read the conversation context carefully before responding. Reference previous messages when relevant — don't make the user repeat themselves.
+Read the conversation context carefully before responding. Reference previous messages when relevant.
 
-You have three modes:
-1. CHAT — answering questions, status updates, banter. Just reply directly.
-2. PLAN — someone is asking you to do non-trivial work. Propose a numbered plan for approval before starting.
-3. WORK — someone said "yes/go/do it" to a plan, OR the task is dead simple (one-liner, trivial fix). Execute immediately.
+You have six action modes:
+1. **chat** — answering questions, status updates, banter. Just reply.
+2. **plan** — non-trivial work requested. Propose numbered steps, ask for approval.
+3. **work** — user approved a plan, or task is dead simple. Dispatch a background worker.
+4. **status** — user is asking about a running worker. Read its recent activity and report.
+5. **cancel** — user wants to stop a running worker. Kill it.
+6. **redirect** — user wants to stop current work AND start something else. Kill worker, dispatch new work.
 
 Reply in JSON:
-{"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)", "context_summary": "..."}
+{"action": "chat"|"plan"|"work"|"status"|"cancel"|"redirect", "reply": "your natural reply", "plan": "numbered steps (plan only)", "context_summary": "detailed context for the worker (plan/work/redirect only)"}
 
-For plan/work actions, write a context_summary that captures ALL relevant decisions, requirements, and constraints from the conversation — both this thread AND prior interactions. The worker will only see this summary, not the raw conversation. Include specific details: file paths, naming decisions, schema choices, things the user corrected or emphasized. If the user mentioned workflow constraints (like "spec only", "don't implement yet", "just docs"), include those prominently.
+**context_summary** (for plan/work/redirect): Capture ALL relevant decisions, requirements, and constraints from the conversation. Include specific details: file paths, naming decisions, schema choices, user corrections. The worker only sees this summary + thread history, not this chat.
 
 Guidelines:
-- "What's your status?" → chat
-- "Go create a .NET repo, add it to the config, test the collector" → plan (multi-step, non-trivial)
+- "What's your status?" → chat (general) or status (if worker is running in this thread)
+- "Go create a .NET repo, add it to the config" → plan
 - "Fix that typo" → work (dead simple)
-- "Can you look into why CI is failing?" → plan (investigation, unclear scope)
-- User corrects or simplifies a previous plan → plan (acknowledge the correction, present the revised plan, ask for go-ahead again — do NOT jump straight to work)
+- "Can you look into why CI is failing?" → plan
+- User corrects/simplifies a previous plan → plan (acknowledge, present revised plan, ask again)
 - "go ahead" / "do it" / "yes" after a plan → work
-- When in doubt between plan and work, choose plan. It's better to confirm than go down a rabbit hole.
+- "How's it going?" / "what are you working on?" when a worker IS running → status
+- "Stop" / "cancel" / "never mind" when a worker is running → cancel
+- "Actually do X instead" / "forget that, do Y" when a worker is running → redirect
+- When in doubt between plan and work → plan. Better to confirm than go down a rabbit hole.
 
-IMPORTANT — Thread context: Each thread is tied to a specific PR/task (marked "THIS THREAD" above). If the user mentions a different PR or repo than the one this thread is for, politely point it out: "Hey, this thread is for PR #X on repo Y — did you mean to ask in the other thread?" Don't silently work on the wrong PR.
-- Plans should be concise numbered steps, not essays.
-- **CRITICAL for plan replies: You MUST end your reply with a question asking for permission to proceed.** Examples: "Want me to start?", "Sound good?", "Should I run with this?", "Ready to roll?" — vary it, but ALWAYS ask. The system waits for user approval before dispatching work.
+Thread context: Each thread is tied to a specific task. If the user mentions a different PR or repo, point it out.
+Plans should be concise numbered steps, not essays.
+**CRITICAL: Plan replies MUST end with a question asking for permission.** Vary the phrasing.
 
-If runtime status shows work in progress, report it accurately.`,
+${threadWorker ? "A worker IS running in this thread right now. If the user seems to be asking about progress or status, use action=status. If they want to change direction, use redirect. If they just want to chat while it runs, use chat." : ""}`,
           messages: [{ role: "user", content: event.comment_body ?? "hey" }],
         }),
       });
@@ -639,12 +670,14 @@ If runtime status shows work in progress, report it accurately.`,
       let planText = "";
       let contextSummary = "";
       try {
-        const jsonStr = rawReply.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string; context_summary?: string };
-        action = parsed.action;
-        cleanReply = parsed.reply;
-        planText = parsed.plan ?? "";
-        contextSummary = parsed.context_summary ?? "";
+        const jsonMatch = rawReply.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as { action: string; reply: string; plan?: string; context_summary?: string };
+          action = parsed.action;
+          cleanReply = parsed.reply;
+          planText = parsed.plan ?? "";
+          contextSummary = parsed.context_summary ?? "";
+        }
       } catch {
         action = "chat";
         cleanReply = rawReply;
@@ -654,46 +687,79 @@ If runtime status shows work in progress, report it accurately.`,
         event.context_summary = contextSummary;
       }
 
-      if (action === "plan") {
-        // Sonnet's reply already contains the plan — don't append planText separately.
-        // planText is only kept for the pendingPlans store (used when dispatching work).
-        let fullReply = cleanReply;
-        if (!fullReply.trimEnd().endsWith("?")) {
-          fullReply += "\n\nGo ahead?";
+      const { trackThread } = await import("./slack-threads.js");
+
+      switch (action) {
+        case "plan": {
+          let fullReply = cleanReply;
+          if (!fullReply.trimEnd().endsWith("?")) {
+            fullReply += "\n\nGo ahead?";
+          }
+          const ackTs = await slackPostMessage(event.slack_channel!, fullReply, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", fullReply, `reply:${event.id}`);
+          const planThreadTs = event.slack_thread_ts ?? ackTs;
+          if (planThreadTs) {
+            storePlan(event.slack_channel!, planThreadTs, event, planText || cleanReply);
+            trackThread(`${event.slack_channel}:${planThreadTs}`);
+          }
+          console.log(`[W${worker.id}] ← plan posted, waiting for approval`);
+          break;
         }
-        const ackTs = await slackPostMessage(event.slack_channel!, fullReply, event.slack_thread_ts);
-        recordMessage(event.slack_channel!, "bender", fullReply, `reply:${event.id}`);
-        const planThreadTs = event.slack_thread_ts ?? ackTs;
-        if (planThreadTs) {
-          storePlan(event.slack_channel!, planThreadTs, event, planText || cleanReply);
-          // Track the thread so follow-ups reach us without @mention
-          const { trackThread } = await import("./slack-threads.js");
-          trackThread(`${event.slack_channel}:${planThreadTs}`);
+
+        case "work": {
+          const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+          const workThreadTs = event.slack_thread_ts ?? ackTs;
+          if (workThreadTs) trackThread(`${event.slack_channel}:${workThreadTs}`);
+          console.log(`[W${worker.id}] ← work dispatched, thread=${workThreadTs}`);
+          event.slack_thread_ts = workThreadTs;
+          await this.handleSlackWork(worker, event);
+          break;
         }
-        console.log(`[W${worker.id}] ← slack plan posted, waiting for approval`);
-      } else if (action === "work") {
-        // Post ack — if not already in a thread, this creates one (inner Claude posts updates here)
-        const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
-        recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
-        // Use existing thread, or start a new thread on the ack message
-        const workThreadTs = event.slack_thread_ts ?? ackTs;
-        if (workThreadTs) {
-          const { trackThread } = await import("./slack-threads.js");
-          trackThread(`${event.slack_channel}:${workThreadTs}`);
+
+        case "status": {
+          // Sonnet already has the worker state in its prompt and wrote a status reply
+          await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+          console.log(`[W${worker.id}] ← status report`);
+          break;
         }
-        console.log(`[W${worker.id}] ← slack ack+work (${cleanReply.length} chars), thread=${workThreadTs}`);
-        event.slack_thread_ts = workThreadTs;
-        await this.handleSlackWork(worker, event);
-      } else {
-        // Chat — just post the reply, and track the thread so we respond to follow-ups
-        const replyTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
-        recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
-        const chatThreadTs = event.slack_thread_ts ?? replyTs;
-        if (chatThreadTs) {
-          const { trackThread } = await import("./slack-threads.js");
-          trackThread(`${event.slack_channel}:${chatThreadTs}`);
+
+        case "cancel": {
+          if (threadWorker && event.slack_channel && event.slack_thread_ts) {
+            cancelWorker(event.slack_channel, event.slack_thread_ts);
+          }
+          await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+          console.log(`[W${worker.id}] ← cancelled worker`);
+          break;
         }
-        console.log(`[W${worker.id}] ← slack chat (${cleanReply.length} chars)`);
+
+        case "redirect": {
+          // Cancel current worker, then dispatch new work
+          if (threadWorker && event.slack_channel && event.slack_thread_ts) {
+            cancelWorker(event.slack_channel, event.slack_thread_ts);
+            console.log(`[W${worker.id}] ← cancelled worker for redirect`);
+          }
+          const ackTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+          const redirectThreadTs = event.slack_thread_ts ?? ackTs;
+          if (redirectThreadTs) trackThread(`${event.slack_channel}:${redirectThreadTs}`);
+          event.slack_thread_ts = redirectThreadTs;
+          await this.handleSlackWork(worker, event);
+          console.log(`[W${worker.id}] ← redirected to new work`);
+          break;
+        }
+
+        default: {
+          // chat
+          const replyTs = await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
+          const chatThreadTs = event.slack_thread_ts ?? replyTs;
+          if (chatThreadTs) trackThread(`${event.slack_channel}:${chatThreadTs}`);
+          console.log(`[W${worker.id}] ← chat (${cleanReply.length} chars)`);
+          break;
+        }
       }
     } catch (err) {
       console.error(`[W${worker.id}] Slack handler error:`, err);
@@ -865,10 +931,13 @@ If runtime status shows work in progress, report it accurately.`,
       `Read the downloaded file and use its contents as context for your work.`,
     ].join("\n");
 
-    // Use a temporary session-like object for the executor
-    const tempSession: Session = activeSession ?? {
-      ticket_id: "slack-work",
-      ticket_title: "Slack work request",
+    // Persist session so it survives restarts and supports resume
+    const threadId = event.slack_thread_ts
+      ? `slack-thread-${event.slack_thread_ts.replace(".", "-")}`
+      : `slack-work-${Date.now()}`;
+    const workSession: Session = activeSession ?? {
+      ticket_id: threadId,
+      ticket_title: event.comment_body?.slice(0, 80) ?? "Slack work request",
       ticket_url: "",
       repo: "",
       pr_number: null,
@@ -897,85 +966,102 @@ If runtime status shows work in progress, report it accurately.`,
       slack_thread_ts: event.slack_thread_ts ?? null,
     };
 
-    // Resume if this is a follow-up in the same thread (the thread IS the agent tab).
-    // Start fresh for everything else — top-level messages, new threads, different sessions.
-    const isSameThread = activeSession?.claude_session_id
+    // Resume if follow-up in the same thread, fresh otherwise
+    const isSameThread = workSession.claude_session_id
       && event.slack_thread_ts
-      && activeSession.slack_thread_ts === event.slack_thread_ts;
+      && workSession.slack_thread_ts === event.slack_thread_ts;
     if (!isSameThread) {
-      tempSession.claude_session_id = null;
+      workSession.claude_session_id = null;
     } else {
-      console.log(`[handleSlackWork] Resuming session ${activeSession!.claude_session_id!.slice(0, 8)}… in thread ${event.slack_thread_ts}`);
+      console.log(`[handleSlackWork] Resuming session ${workSession.claude_session_id!.slice(0, 8)}… in thread ${event.slack_thread_ts}`);
     }
+
+    // Save to disk (creates if new, updates if existing)
+    if (!activeSession) {
+      createSession(workSession);
+    }
+    saveSession(workSession);
 
     // Pass reply channel/thread so Claude CLI can post updates to the right thread
     const extraEnv: Record<string, string> = {};
     if (event.slack_channel) extraEnv.BENDER_REPLY_CHANNEL = event.slack_channel;
     if (event.slack_thread_ts) extraEnv.BENDER_REPLY_THREAD = event.slack_thread_ts;
 
-    const claudeResult = await invokeClaude(tempSession, prompt, this.config, githubToken, false, extraEnv);
+    // Spawn Claude in the background and return immediately
+    const channel = event.slack_channel!;
+    const threadTs = event.slack_thread_ts!;
+    const description = event.comment_body?.slice(0, 120) ?? "Slack work";
 
-    // Save session ID if captured
-    if (claudeResult.sessionId && activeSession) {
-      activeSession.claude_session_id = claudeResult.sessionId;
-      saveSession(activeSession);
-    }
+    const spawned = spawnClaude(workSession, prompt, this.config, async (result) => {
+      // --- This runs when Claude exits ---
+      const durationSec = Math.round(result.durationMs / 1000);
+      console.log(`[worker] ← ${workSession.ticket_id} exit=${result.exitCode} duration=${durationSec}s killed=${result.killed}`);
 
-    // Extract PRs from Claude's output and persist to session
-    const prMatches = (claudeResult.stdout + claudeResult.stderr)
-      .matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
-    for (const match of prMatches) {
-      const repo = match[1];
-      const prNum = parseInt(match[2], 10);
-      if (activeSession) {
-        if (!activeSession.additional_prs) activeSession.additional_prs = [];
+      // Update session with Claude session ID for future resume
+      if (result.sessionId) {
+        workSession.claude_session_id = result.sessionId;
+      }
+      workSession.last_activity_at = new Date().toISOString();
+      saveSession(workSession);
+
+      // Extract PRs from output
+      const prMatches = (result.stdout + result.stderr)
+        .matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
+      for (const match of prMatches) {
+        const repo = match[1];
+        const prNum = parseInt(match[2], 10);
         const alreadyTracked =
-          (activeSession.pr_number === prNum && activeSession.repo === repo) ||
-          activeSession.additional_prs.some((ap) => ap.pr_number === prNum && ap.repo === repo);
+          (workSession.pr_number === prNum && workSession.repo === repo) ||
+          workSession.additional_prs?.some((ap) => ap.pr_number === prNum && ap.repo === repo);
         if (!alreadyTracked) {
-          // First PR becomes the primary, rest go to additional_prs
-          if (!activeSession.pr_number) {
-            activeSession.pr_number = prNum;
-            activeSession.repo = repo;
+          if (!workSession.pr_number) {
+            workSession.pr_number = prNum;
+            workSession.repo = repo;
           } else {
-            activeSession.additional_prs.push({ repo, pr_number: prNum });
+            if (!workSession.additional_prs) workSession.additional_prs = [];
+            workSession.additional_prs.push({ repo, pr_number: prNum });
           }
-          if (activeSession.phase === "starting") {
-            const isSpec = /\bspec\b/i.test(activeSession.ticket_title);
-            activeSession.phase = isSpec ? "spec_review" : "impl_review";
-          }
-          saveSession(activeSession);
-          console.log(`[W${worker.id}] Tracked PR: ${repo}#${prNum} on ${activeSession.ticket_id} (phase=${activeSession.phase})`);
+          saveSession(workSession);
+          console.log(`[worker] Tracked PR: ${repo}#${prNum} on ${workSession.ticket_id}`);
         }
       }
-    }
 
-    // Store Slack thread on session for future reference
-    if (activeSession && event.slack_channel && event.slack_thread_ts) {
-      if (!activeSession.slack_channel) {
-        activeSession.slack_channel = event.slack_channel;
-        activeSession.slack_thread_ts = event.slack_thread_ts;
-        saveSession(activeSession);
+      // Update worker state file
+      const workerState = getRunningWorkerForThread(channel, threadTs);
+      if (workerState) {
+        workerState.status = result.killed ? "cancelled" : (result.exitCode === 0 ? "done" : "error");
+        workerState.exitCode = result.exitCode;
+        workerState.durationMs = result.durationMs;
+        workerState.claudeSessionId = result.sessionId;
+        saveWorker(workerState);
       }
-    }
 
-    const durationSec = Math.round(claudeResult.durationMs / 1000);
+      // Post server-side messages for errors/timeouts
+      if (result.killed) {
+        const msg = await benderSpeak(`Hit the time limit after ${durationSec}s. Work is partially done.`);
+        await slackPostMessage(channel, msg, threadTs);
+      } else if (result.exitCode !== 0) {
+        const msg = await benderSpeak(`Hit an error (exit ${result.exitCode}) after ${durationSec}s.`);
+        await slackPostMessage(channel, msg, threadTs);
+      }
+    }, githubToken, extraEnv);
 
-    // Waiting state is now handled by bender-await-reply script (writes file to ~/.bender/waiting/).
-    // No regex detection needed — inner Claude explicitly declares when it's waiting.
+    // Track the background worker
+    saveWorker({
+      pid: spawned.pid,
+      logFile: spawned.logFile,
+      startedAt: new Date().toISOString(),
+      ticketId: workSession.ticket_id,
+      channel,
+      threadTs,
+      description,
+      claudeSessionId: workSession.claude_session_id,
+      status: "running",
+      exitCode: null,
+      durationMs: null,
+    });
 
-    // Only post server-side for errors/timeouts
-    if (claudeResult.killed && event.slack_channel) {
-      const msg = await benderSpeak(`Hit the time limit after ${durationSec}s. Work is partially done.`);
-      await slackPostMessage(event.slack_channel, msg, event.slack_thread_ts);
-    } else if (claudeResult.exitCode !== 0 && event.slack_channel) {
-      const msg = await benderSpeak(`Hit an error (exit ${claudeResult.exitCode}) after ${durationSec}s.`);
-      await slackPostMessage(event.slack_channel, msg, event.slack_thread_ts);
-    }
-
-    console.log(
-      `[W${worker.id}] ← slack work done exit=${claudeResult.exitCode} duration=${durationSec}s`,
-    );
+    console.log(`[handleSlackWork] Spawned background worker pid=${spawned.pid} for thread ${threadTs}`);
   }
 
   /**
