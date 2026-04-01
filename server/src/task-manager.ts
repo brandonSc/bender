@@ -552,7 +552,9 @@ You have three modes:
 2. PLAN — someone is asking you to do non-trivial work. Propose a numbered plan for approval before starting.
 3. WORK — someone said "yes/go/do it" to a plan, OR the task is dead simple (one-liner, trivial fix). Execute immediately.
 
-Reply in JSON: {"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)"}
+Reply in JSON: {"action": "chat" | "plan" | "work", "reply": "your natural reply", "plan": "numbered steps (only for action=plan)", "context_summary": "brief summary of relevant prior context for the worker (only for action=plan or work)"}
+
+For plan/work actions, write a context_summary that captures ALL relevant decisions, requirements, and constraints from the conversation — both this thread AND prior interactions. The worker will only see this summary, not the raw conversation. Include specific details: file paths, naming decisions, schema choices, phase constraints (spec-only vs implementation), things the user corrected or emphasized.
 
 Guidelines:
 - "What's your status?" → chat
@@ -580,15 +582,21 @@ If runtime status shows work in progress, report it accurately.`,
       let action = "chat";
       let cleanReply = rawReply;
       let planText = "";
+      let contextSummary = "";
       try {
         const jsonStr = rawReply.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string };
+        const parsed = JSON.parse(jsonStr) as { action: string; reply: string; plan?: string; context_summary?: string };
         action = parsed.action;
         cleanReply = parsed.reply;
         planText = parsed.plan ?? "";
+        contextSummary = parsed.context_summary ?? "";
       } catch {
         action = "chat";
         cleanReply = rawReply;
+      }
+
+      if (contextSummary) {
+        event.context_summary = contextSummary;
       }
 
       if (action === "plan") {
@@ -714,8 +722,15 @@ If runtime status shows work in progress, report it accurately.`,
       `Channel: ${event.slack_channel}`,
       `Latest message: ${event.comment_body}`,
       "",
+      ...(event.context_summary ? [
+        `## Context Summary (from prior conversation — this is the most important section)`,
+        `This summary was prepared from the full conversation including messages outside this thread.`,
+        `It captures all decisions, requirements, constraints, and corrections discussed so far.`,
+        event.context_summary,
+        "",
+      ] : []),
       ...(threadContext ? [
-        `## Full Conversation History (this Slack thread — read ALL of it)`,
+        `## Full Conversation History (this Slack thread — supplementary detail)`,
         `This thread contains the full discussion leading to this work request.`,
         `Pay attention to refinements, corrections, and specific details mentioned in earlier messages.`,
         threadContext,
