@@ -897,8 +897,16 @@ If runtime status shows work in progress, report it accurately.`,
       slack_thread_ts: event.slack_thread_ts ?? null,
     };
 
-    // Fresh invocation — don't resume, stale context causes hallucinated rules
-    tempSession.claude_session_id = null;
+    // Resume if this is a follow-up in the same thread (the thread IS the agent tab).
+    // Start fresh for everything else — top-level messages, new threads, different sessions.
+    const isSameThread = activeSession?.claude_session_id
+      && event.slack_thread_ts
+      && activeSession.slack_thread_ts === event.slack_thread_ts;
+    if (!isSameThread) {
+      tempSession.claude_session_id = null;
+    } else {
+      console.log(`[handleSlackWork] Resuming session ${activeSession!.claude_session_id!.slice(0, 8)}… in thread ${event.slack_thread_ts}`);
+    }
 
     // Pass reply channel/thread so Claude CLI can post updates to the right thread
     const extraEnv: Record<string, string> = {};
