@@ -1,3 +1,5 @@
+import { readFileSync, unlinkSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 import express from "express";
 import { loadConfig, loadSecrets } from "./config.js";
 import { initGitHubAuth, getAppOctokit, getInstallationToken } from "./github-auth.js";
@@ -372,6 +374,43 @@ if (secrets.SLACK_BOT_TOKEN) {
     .catch((err) => console.warn("[slack] Failed to resolve bot identity:", err));
 }
 
+// --- Restart notification ---
+
+async function checkRestartNotification(): Promise<void> {
+  const notifPath = resolve(
+    process.env.HOME ?? "/home/ubuntu",
+    ".bender",
+    "restart-notification.json",
+  );
+
+  if (!existsSync(notifPath)) return;
+
+  try {
+    const raw = readFileSync(notifPath, "utf-8");
+    const notif = JSON.parse(raw) as {
+      channel?: string;
+      thread_ts?: string;
+      reason?: string;
+      requested_at?: number;
+    };
+
+    if (notif.channel) {
+      const msg = `I'm back, baby! Restart complete.${notif.reason ? ` (${notif.reason})` : ""}`;
+      await postMessage(notif.channel, msg, notif.thread_ts || undefined);
+      console.log(`[restart] Sent notification to ${notif.channel}`);
+    } else {
+      console.log("[restart] Notification file found but no channel — skipping Slack post");
+    }
+
+    unlinkSync(notifPath);
+    console.log("[restart] Cleaned up notification file");
+  } catch (err) {
+    console.error("[restart] Failed to process notification:", err);
+    // Clean up even on error to avoid infinite loops
+    try { unlinkSync(notifPath); } catch { /* already gone */ }
+  }
+}
+
 // --- Start ---
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
@@ -392,4 +431,7 @@ app.listen(PORT, () => {
   console.log(`  GET  /health`);
   console.log("");
   console.log("Bite my shiny metal AST. 🤖");
+
+  // Check for restart notification after boot (slight delay so Slack auth resolves first)
+  setTimeout(() => checkRestartNotification(), 3000);
 });
