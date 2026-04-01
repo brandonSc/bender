@@ -66,6 +66,25 @@ When adding or modifying collectors/policies in `earthly/lunar-lib`:
 4. **The build in the org repo MUST pass** for changes to reach the hub
 5. After merging your PR to lunar-lib, verify that downstream org repos still build
 
+## Restarting the Server
+
+When you need to restart (e.g. after code changes to the server):
+
+```bash
+# Safe restart — checks for active workers first, aborts if any are busy:
+bender-restart "reason for restart"
+
+# Force restart — kills active workers mid-task (use only if truly necessary):
+bender-restart --force "reason for restart"
+```
+
+The script also writes a notification file so the server announces it's back
+online to whoever requested the restart. Set `BENDER_REPLY_CHANNEL` and
+`BENDER_REPLY_THREAD` in your env so the notification goes to the right thread.
+
+**NEVER restart with active workers unless it's urgent.** Workers running mid-task
+will be killed and their work lost. Check status first: `curl -s localhost:3000/status | jq '.workers'`
+
 ## Common Gotchas
 
 - **Branch names with slashes** (like `bender/foo`) can cause issues in plugin
