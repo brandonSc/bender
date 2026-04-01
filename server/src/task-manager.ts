@@ -563,8 +563,8 @@ export class TaskManager {
     let workerStatus = "";
     if (threadWorker) {
       const elapsed = Math.round((Date.now() - new Date(threadWorker.startedAt).getTime()) / 1000);
-      const lastTools = getWorkerLogTail(threadWorker, 3);
-      workerStatus = `**A worker is currently running in THIS thread** (${Math.floor(elapsed / 60)}m${elapsed % 60}s):\n  Task: "${threadWorker.description}"\n  Recent activity:\n${lastTools}`;
+      const lastTools = getWorkerLogTail(threadWorker, 8);
+      workerStatus = `**A worker is currently running in THIS thread** (${Math.floor(elapsed / 60)}m${elapsed % 60}s):\n  Task: "${threadWorker.description}"\n  Log size: ${Math.round(require("fs").statSync(threadWorker.logFile).size / 1024)}KB\n  Recent tool calls:\n${lastTools}\n\nWhen reporting status, summarize what the worker is doing based on the tool calls above. Be specific — "reading files" is not useful, "reading the openapi collector manifest and swagger docs" is.`;
     } else if (runningWorkers.length > 0) {
       workerStatus = `Background workers running:\n${runningWorkers.map((w) => {
         const elapsed = Math.round((Date.now() - new Date(w.startedAt).getTime()) / 1000);

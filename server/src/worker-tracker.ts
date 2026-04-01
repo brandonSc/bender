@@ -113,10 +113,12 @@ export function getWorkerLogTail(state: WorkerState, lines = 10): string {
   if (!existsSync(state.logFile)) return "(no log file)";
   try {
     const content = readFileSync(state.logFile, "utf-8");
-    // Extract last N tool calls for a useful summary
     const toolLines = content.split("\n").filter((l) => l.startsWith("[tool]"));
-    const lastTools = toolLines.slice(-lines).join("\n");
-    return lastTools || "(no tool calls yet)";
+    // Show the full tool line (includes command/path info) for the last N calls
+    const lastTools = toolLines.slice(-lines)
+      .map((l) => `  ${l.slice(0, 200)}`)
+      .join("\n");
+    return lastTools || "(no tool calls yet — worker is still starting up)";
   } catch {
     return "(error reading log)";
   }
