@@ -653,13 +653,9 @@ If runtime status shows work in progress, report it accurately.`,
       }
 
       if (action === "plan") {
-        // Post the plan and wait for approval.
-        // Only append planText if it's not already in the reply (Sonnet often includes it in both).
+        // Sonnet's reply already contains the plan — don't append planText separately.
+        // planText is only kept for the pendingPlans store (used when dispatching work).
         let fullReply = cleanReply;
-        if (planText && !cleanReply.includes(planText.slice(0, 40))) {
-          fullReply = `${cleanReply}\n\n${planText}`;
-        }
-        // Ensure the plan always ends with a question — fallback if Sonnet forgot
         if (!fullReply.trimEnd().endsWith("?")) {
           fullReply += "\n\nGo ahead?";
         }
