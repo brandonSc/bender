@@ -27,13 +27,21 @@ if [ ! -f "$SESSION_FILE" ]; then
   exit 1
 fi
 
+# Determine phase: spec-first PRs go to spec_review, others to impl_review
+TITLE=$(jq -r '.ticket_title // ""' "$SESSION_FILE")
+if echo "$TITLE" | grep -qi 'spec'; then
+  NEW_PHASE="spec_review"
+else
+  NEW_PHASE="impl_review"
+fi
+
 # Update repo, pr_number, advance phase, and clear stale Claude session
-# (old session has context for whatever PR was previously linked)
 UPDATED=$(jq \
   --arg repo "$REPO" \
   --argjson pr "$PR_NUMBER" \
-  '.repo = $repo | .pr_number = $pr | .claude_session_id = null | if .phase == "starting" then .phase = "impl_review" else . end' \
+  --arg phase "$NEW_PHASE" \
+  '.repo = $repo | .pr_number = $pr | .claude_session_id = null | if .phase == "starting" then .phase = $phase else . end' \
   "$SESSION_FILE")
 
 echo "$UPDATED" > "$SESSION_FILE"
-echo "Tracked PR #$PR_NUMBER on $REPO for session $BENDER_TICKET_ID (phase → impl_review)"
+echo "Tracked PR #$PR_NUMBER on $REPO for session $BENDER_TICKET_ID (phase → $NEW_PHASE)"
