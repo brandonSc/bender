@@ -79,9 +79,13 @@ Rules (strict — Bender was replying too much, so err heavily toward silence):
     const data = (await resp.json()) as { content: Array<{ text: string }> };
     const text = data.content[0].text.trim();
 
-    // Parse JSON from response (handle markdown code blocks)
-    const jsonStr = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    const decision = JSON.parse(jsonStr) as LurkDecision;
+    // Extract JSON from response — Haiku sometimes wraps it in text or code blocks
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn(`[slack-evaluator] No JSON found in Haiku response: "${text.slice(0, 100)}"`);
+      return { action: "ignore", confidence: 0, reply_in_thread: false };
+    }
+    const decision = JSON.parse(jsonMatch[0]) as LurkDecision;
     console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} msg="${message.slice(0, 60)}"`);
 
     const threshold = decision.action === "emoji_react" ? 0.8 : 0.9;
