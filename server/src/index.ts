@@ -1,6 +1,6 @@
 import express from "express";
 import { loadConfig, loadSecrets } from "./config.js";
-import { initGitHubAuth } from "./github-auth.js";
+import { initGitHubAuth, getAppOctokit, getInstallationToken } from "./github-auth.js";
 import {
   verifyGitHubSignature,
   parseGitHubEvent,
@@ -92,6 +92,38 @@ app.get("/status", (_req, res) => {
       last_activity_at: s.last_activity_at,
     })),
   });
+});
+
+// --- Internal: GitHub token for any org (localhost only) ---
+
+app.get("/internal/github-token", async (req, res) => {
+  const ip = req.ip ?? req.socket.remoteAddress ?? "";
+  if (!ip.includes("127.0.0.1") && !ip.includes("::1") && !ip.includes("::ffff:127.0.0.1")) {
+    res.status(403).json({ error: "localhost only" });
+    return;
+  }
+
+  const org = req.query.org as string;
+  if (!org) {
+    res.status(400).json({ error: "Missing ?org= parameter", available: ["earthly", "pantalasa", "pantalasa-cronos", "brandonSc"] });
+    return;
+  }
+
+  try {
+    const octokit = getAppOctokit();
+    const { data: installations } = await octokit.rest.apps.listInstallations();
+    const match = installations.find((i) => i.account?.login === org);
+    if (!match) {
+      const available = installations.map((i) => i.account?.login).filter(Boolean);
+      res.status(404).json({ error: `No installation for org "${org}"`, available });
+      return;
+    }
+
+    const token = await getInstallationToken(match.id);
+    res.json({ token, org, installation_id: match.id });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 // --- Linear OAuth ---
