@@ -81,7 +81,7 @@ Rules:
   - Something surprising → :eyes: or :open_mouth:
   - Something goes wrong → :grimacing: or :sob:
   - Someone says something relatable → :this: or :point_up:
-- Use :bender-neat: ONLY when something is genuinely "neat" (cool tech, interesting discovery). Not as a catch-all.
+- :bender-neat: is a great one — use it when something is genuinely cool, interesting, or impressive. Just not for every single react.
 - Space them out — one react per conversation topic. If you already reacted recently, skip it.
 
 **Replies (higher bar — be selective):**
@@ -96,7 +96,7 @@ Rules:
 - When in doubt → ignore. But don't be a wallflower either — if there's a natural opening, take it.
 
 - If conversation is NOT in a thread, reply_in_thread should be false.
-- confidence must be > 0.8 for emoji_react, > 0.9 for reply`,
+- confidence must be > 0.85 for emoji_react, > 0.9 for reply`,
         }],
       }),
     });
@@ -118,7 +118,7 @@ Rules:
     const decision = JSON.parse(jsonMatch[0]) as LurkDecision;
     console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} msg="${message.slice(0, 60)}"`);
 
-    const threshold = decision.action === "emoji_react" ? 0.8 : 0.9;
+    const threshold = decision.action === "emoji_react" ? 0.85 : 0.9;
     if (decision.confidence < threshold) {
       return { action: "ignore", confidence: decision.confidence, reply_in_thread: false };
     }
