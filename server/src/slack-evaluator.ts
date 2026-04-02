@@ -1,6 +1,20 @@
 import { getChannelHistory } from "./slack-client.js";
 import { listActiveSessions } from "./session-store.js";
 
+// Cooldown: track recent reactions per channel to avoid spamming
+const recentReactions = new Map<string, number>();
+const REACT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between reactions in same channel
+
+export function canReactInChannel(channel: string): boolean {
+  const last = recentReactions.get(channel);
+  if (last && Date.now() - last < REACT_COOLDOWN_MS) return false;
+  return true;
+}
+
+export function recordReaction(channel: string): void {
+  recentReactions.set(channel, Date.now());
+}
+
 interface LurkDecision {
   action: "ignore" | "emoji_react" | "reply";
   confidence: number;
@@ -63,7 +77,7 @@ Rules:
 - Someone ships something, fixes a bug, deploys → react with an appropriate emoji (:rocket:, :tada:, :fire:, etc.)
 - Something goes wrong or is frustrating → react with :bender: or a fitting emoji
 - Use :bender-neat: as the default when something is generally cool but no specific emoji fits better
-- Reacts are low-noise and make Bender feel like part of the team — use them when there's a reason to, but don't react to every single message
+- Reacts make Bender feel like part of the team, but space them out — don't react to multiple messages in a row or it feels spammy. One react per conversation topic is plenty. If you already reacted recently, skip it.
 
 **Replies (higher bar — be selective):**
 - Someone mentions "bender" by name and is clearly talking to him → reply

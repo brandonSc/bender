@@ -24,7 +24,7 @@ import {
 } from "./linear-auth.js";
 import { getViewer } from "./linear-client.js";
 import { postMessage, addReaction } from "./slack-client.js";
-import { evaluateLurk } from "./slack-evaluator.js";
+import { evaluateLurk, canReactInChannel, recordReaction } from "./slack-evaluator.js";
 import { trackThread, isActiveThread } from "./slack-threads.js";
 
 // --- Bootstrap ---
@@ -351,8 +351,13 @@ app.post("/webhooks/slack", async (req, res) => {
       );
 
       if (decision.action === "emoji_react" && decision.emoji) {
-        console.log(`[slack] Lurk → react :${decision.emoji}: (confidence=${decision.confidence})`);
-        await addReaction(event.slack_channel!, (slackEvent.ts as string) ?? "", decision.emoji);
+        if (!canReactInChannel(event.slack_channel!)) {
+          console.log(`[slack] Lurk → react COOLDOWN (skipped :${decision.emoji}: in ${event.slack_channel})`);
+        } else {
+          console.log(`[slack] Lurk → react :${decision.emoji}: (confidence=${decision.confidence})`);
+          await addReaction(event.slack_channel!, (slackEvent.ts as string) ?? "", decision.emoji);
+          recordReaction(event.slack_channel!);
+        }
       } else if (decision.action === "reply" && decision.suggested_reply) {
         console.log(`[slack] Lurk → reply (confidence=${decision.confidence})`);
         await postMessage(
