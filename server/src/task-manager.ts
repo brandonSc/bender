@@ -275,7 +275,7 @@ export class TaskManager {
         return !busyTickets.has(threadKey);
       }
       const ticketId = item.event.ticket_id
-        ?? this.resolveTicketForPR(item.event.pr_number);
+        ?? this.resolveTicketForPR(item.event.pr_number, item.event.repo);
       return !ticketId || !busyTickets.has(ticketId);
     });
 
@@ -285,9 +285,9 @@ export class TaskManager {
     this.dispatch(worker, item.event);
   }
 
-  private resolveTicketForPR(prNumber?: number): string | null {
+  private resolveTicketForPR(prNumber?: number, repo?: string): string | null {
     if (!prNumber) return null;
-    const session = findSessionForEvent({ pr_number: prNumber });
+    const session = findSessionForEvent({ pr_number: prNumber, repo });
     return session?.ticket_id ?? null;
   }
 
