@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Config, TaskEvent, Worker, Session } from "./types.js";
@@ -626,7 +626,8 @@ export class TaskManager {
     if (threadWorker) {
       const elapsed = Math.round((Date.now() - new Date(threadWorker.startedAt).getTime()) / 1000);
       const lastTools = getWorkerLogTail(threadWorker, 8);
-      workerStatus = `**A worker is currently running in THIS thread** (${Math.floor(elapsed / 60)}m${elapsed % 60}s):\n  Task: "${threadWorker.description}"\n  Log size: ${Math.round(require("fs").statSync(threadWorker.logFile).size / 1024)}KB\n  Recent tool calls:\n${lastTools}\n\nWhen reporting status, summarize what the worker is doing based on the tool calls above. Be specific — "reading files" is not useful, "reading the openapi collector manifest and swagger docs" is.`;
+      const logSize = existsSync(threadWorker.logFile) ? Math.round(statSync(threadWorker.logFile).size / 1024) : 0;
+      workerStatus = `**A worker is currently running in THIS thread** (${Math.floor(elapsed / 60)}m${elapsed % 60}s):\n  Task: "${threadWorker.description}"\n  Log size: ${logSize}KB\n  Recent tool calls:\n${lastTools}\n\nWhen reporting status, summarize what the worker is doing based on the tool calls above. Be specific — "reading files" is not useful, "reading the openapi collector manifest and swagger docs" is.`;
     } else if (runningWorkers.length > 0) {
       workerStatus = `Background workers running:\n${runningWorkers.map((w) => {
         const elapsed = Math.round((Date.now() - new Date(w.startedAt).getTime()) / 1000);
