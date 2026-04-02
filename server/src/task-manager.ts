@@ -181,14 +181,37 @@ export class TaskManager {
         ` | queue=${this.queue.length} workers=${this.busyCount()}/${this.workers.length}`,
     );
 
-    // High-priority events skip debounce
+    // Compute the debounce key up front — needed for both high-pri and normal paths
+    const ticketKey = event.ticket_id ?? (event.pr_number ? `pr:${event.pr_number}` : event.id);
+
+    // High-priority events skip debounce but absorb any pending debounced events
+    // for the same ticket/PR. This prevents split dispatches when e.g. a reviewer
+    // approval (pri 2) arrives alongside inline review comments (pri 3).
     if (event.priority <= 2) {
+      const pending = this.debounceTimers.get(ticketKey);
+      if (pending) {
+        clearTimeout(pending.timer);
+        // Merge pending comment data into the high-priority event
+        if (pending.event.comment_body) {
+          const separator = event.comment_body ? "\n\n---\n" : "";
+          event.comment_body = (event.comment_body ?? "") + separator + pending.event.comment_body;
+        }
+        // Merge accumulated review comment IDs
+        if (pending.event.review_comment_ids?.length || pending.event.review_comment_id) {
+          const pendingIds = pending.event.review_comment_ids
+            ?? (pending.event.review_comment_id ? [pending.event.review_comment_id] : []);
+          const currentIds = event.review_comment_ids
+            ?? (event.review_comment_id ? [event.review_comment_id] : []);
+          event.review_comment_ids = [...currentIds, ...pendingIds];
+        }
+        this.debounceTimers.delete(ticketKey);
+        console.log(`[queue] Absorbed pending debounce for ${ticketKey} into high-priority ${event.type}`);
+      }
       this.addToQueue(event);
       return;
     }
 
     // Debounce comment-type events per ticket — accumulate messages, dispatch after silence
-    const ticketKey = event.ticket_id ?? (event.pr_number ? `pr:${event.pr_number}` : event.id);
     const existing = this.debounceTimers.get(ticketKey);
     if (existing) {
       clearTimeout(existing.timer);
@@ -198,6 +221,15 @@ export class TaskManager {
         existing.event.comment_body += `\n\n---\n**${author}:** ${event.comment_body}`;
       } else if (event.comment_body) {
         existing.event.comment_body = event.comment_body;
+      }
+      // Accumulate review comment IDs so the worker can reply to each thread
+      if (event.review_comment_id) {
+        if (!existing.event.review_comment_ids) {
+          existing.event.review_comment_ids = existing.event.review_comment_id
+            ? [existing.event.review_comment_id]
+            : [];
+        }
+        existing.event.review_comment_ids.push(event.review_comment_id);
       }
       // Keep higher priority
       if (event.priority < existing.event.priority) {
@@ -331,10 +363,39 @@ export class TaskManager {
       }
       saveSession(result.session);
     } finally {
+      // Before releasing the worker, drain any queued GitHub comment events for
+      // this same ticket that were enqueued BEFORE or during this dispatch.
+      // The worker already read ALL PR comments, so these are redundant.
+      if (event.source === "github" && result?.session?.ticket_id) {
+        this.drainStaleGitHubEvents(result.session.ticket_id, result.session.pr_number);
+      }
       worker.busy = false;
       worker.current_ticket = null;
       worker.current_description = null;
       this.processNext();
+    }
+  }
+
+  /**
+   * Remove queued GitHub comment/review events for a ticket whose worker just finished.
+   * The worker reads ALL PR comments during its run, so any queued events that were
+   * part of the same "batch" of reviewer activity are already handled.
+   */
+  private drainStaleGitHubEvents(ticketId: string, prNumber: number | null | undefined): void {
+    const staleTypes = new Set<string>(["reviewer_comment", "pr_review"]);
+    const before = this.queue.length;
+    this.queue = this.queue.filter((item) => {
+      if (item.event.source !== "github") return true;
+      if (!staleTypes.has(item.event.type)) return true;
+      // Match by ticket ID or PR number
+      const itemTicket = item.event.ticket_id ?? this.resolveTicketForPR(item.event.pr_number);
+      if (itemTicket === ticketId) return false;
+      if (prNumber && item.event.pr_number === prNumber) return false;
+      return true;
+    });
+    const drained = before - this.queue.length;
+    if (drained > 0) {
+      console.log(`[queue] Drained ${drained} stale GitHub event(s) for ${ticketId} — already handled by previous dispatch`);
     }
   }
 
@@ -692,6 +753,18 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       switch (action) {
         case "plan": {
           let fullReply = cleanReply;
+          // Sonnet sometimes puts the plan steps only in the "plan" field,
+          // leaving "reply" as just a teaser like "Here's what I'm thinking:".
+          // If plan steps exist but aren't in the reply, inject them.
+          if (planText && !/\d+\.\s/.test(cleanReply)) {
+            const trailingQuestion = fullReply.match(/(\n*[^\n]*\?\s*)$/);
+            if (trailingQuestion?.index != null) {
+              const base = fullReply.slice(0, trailingQuestion.index).trimEnd();
+              fullReply = `${base}\n\n${planText}\n\n${trailingQuestion[0].trim()}`;
+            } else {
+              fullReply = `${fullReply.trimEnd()}\n\n${planText}`;
+            }
+          }
           if (!fullReply.trimEnd().endsWith("?")) {
             fullReply += "\n\nGo ahead?";
           }

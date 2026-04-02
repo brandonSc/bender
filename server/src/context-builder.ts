@@ -139,6 +139,11 @@ export function buildResumedPrompt(
       "",
       "Address EVERY unresolved comment — not just the one that triggered this event.",
       "Make ALL requested code changes, commit, and push before replying.",
+      "",
+      "**IMPORTANT — avoid duplicate replies:** Before posting a reply to any comment thread,",
+      "check if a reply from `bender-the-robot[bot]` (or your bot account) already exists in that thread.",
+      "A comment is in the same thread if its `in_reply_to_id` matches the parent comment's `id`.",
+      "If you already replied to a thread, do NOT reply again — skip it and move on.",
     );
     if (event.review_comment_id) {
       parts.push(
@@ -150,6 +155,15 @@ export function buildResumedPrompt(
         "```",
         "Do NOT use `gh pr comment` — that posts top-level, not in-thread.",
       );
+      // Include all triggering comment IDs so the worker can reply to each correct thread
+      const allIds = event.review_comment_ids ?? [event.review_comment_id];
+      if (allIds.length > 1) {
+        parts.push(
+          "",
+          `**Triggering comment IDs** (reply to EACH in its own thread): ${allIds.join(", ")}`,
+          "Match each reply to the correct comment ID. Do NOT reply to all comments under a single thread.",
+        );
+      }
     }
   } else if (event.comment_body && event.source === "linear") {
     parts.push(
