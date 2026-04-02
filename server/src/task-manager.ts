@@ -703,6 +703,7 @@ Guidelines:
 - "What's your status?" → chat (general) or status (if worker is running in this thread)
 - "Go create a .NET repo, add it to the config" → plan
 - "Fix that typo" → work (dead simple)
+- "Post X in #channel" / "Let them know" / "Send a message to Y" → work (it's a direct instruction to do something)
 - "Can you look into why CI is failing?" → plan
 - **User modifies the plan in ANY way** (corrects, simplifies, expands, adds context, changes scope, provides a link/ticket they forgot, says "actually..." or "I meant...") → **plan** (acknowledge what changed, present revised understanding, ask for go-ahead again). Do NOT jump to work — the user is still refining.
 - "go ahead" / "do it" / "yes" / "ship it" (short affirmative with no new info) → work
