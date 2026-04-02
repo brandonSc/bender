@@ -20,11 +20,7 @@ import {
   buildResumedPrompt,
   buildCheckpointedPrompt,
 } from "./context-builder.js";
-import {
-  emitThought,
-  emitResponse,
-  emitError,
-} from "./linear-agent.js";
+// Linear agent communication removed — all updates go through Slack now
 import { postMessage as slackPostMessage, getThreadMessages, getChannelHistory } from "./slack-client.js";
 import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
@@ -422,13 +418,8 @@ export class TaskManager {
       }
     }
 
-    // Post a thought to Linear for new tickets
-    if (session.agent_session_id && isNewSession) {
-      const msg = await benderSpeak(
-        `Starting work on ticket ${session.ticket_id}: "${session.ticket_title}"`,
-      );
-      await emitThought(session.agent_session_id, msg);
-    }
+    // Slack agent tab init already posts the "starting work" message above.
+    // No separate Linear post needed — all communication goes through Slack.
 
     // Build the prompt
     let prompt: string;
@@ -513,12 +504,12 @@ export class TaskManager {
       console.warn(
         `[W${worker.id}] ${session.ticket_id} killed by circuit breaker`,
       );
-      if (session.agent_session_id) {
+      if (session.slack_channel && session.slack_thread_ts) {
         const msg = await benderSpeak(
           `Hit the ${this.config.circuit_breaker.max_duration_minutes}-minute time limit on ${session.ticket_id}. Need to pause and continue later.` +
             (summary ? ` Last thing I was doing: ${summary}` : ""),
         );
-        await emitError(session.agent_session_id, msg);
+        await slackPostMessage(session.slack_channel, msg, session.slack_thread_ts);
       }
     } else if (claudeResult.exitCode === 0) {
       session.status = "parked";
@@ -549,23 +540,17 @@ export class TaskManager {
         }
       }
 
-      if (session.agent_session_id && maxTurnsHit) {
-        const msg = await benderSpeak(
-          `Ran out of tool turns on ${session.ticket_id}. Will continue on next event.`,
-        );
-        await emitResponse(session.agent_session_id, msg);
-      }
     } else {
       session.retry_count++;
       if (session.retry_count >= session.max_retries) {
         session.phase = "error";
         session.status = "error";
-        if (session.agent_session_id) {
+        if (session.slack_channel && session.slack_thread_ts) {
           const msg = await benderSpeak(
             `Failed ${session.max_retries} times on ${session.ticket_id} with exit code ${claudeResult.exitCode}. Need a human to help.` +
               (summary ? ` Error: ${summary}` : ""),
           );
-          await emitError(session.agent_session_id, msg);
+          await slackPostMessage(session.slack_channel, msg, session.slack_thread_ts);
         }
       }
     }
