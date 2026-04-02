@@ -525,27 +525,30 @@ export class TaskManager {
 
       const maxTurnsHit = claudeResult.stderr.includes("max turns");
 
-      // Always post a completion update to the Slack agent tab
-      if (session.slack_channel && session.slack_thread_ts) {
+      // If Claude produced output but never posted it to Slack itself, post it now.
+      // Check if Claude used bender-say, bender-await-reply, or curl to Slack during the run.
+      const claudePostedToSlack = claudeResult.stderr.includes("chat.postMessage")
+        || claudeResult.stdout.includes("chat.postMessage")
+        || claudeResult.stderr.includes("bender-await-reply")
+        || claudeResult.stdout.includes("bender-await-reply");
+
+      if (session.slack_channel && session.slack_thread_ts && !claudePostedToSlack) {
         if (maxTurnsHit) {
           const msg = await benderSpeak(
             `Ran out of tool turns on ${session.ticket_id} after ${durationSec}s. Work is in progress but couldn't finish in one go.`,
           );
           await slackPostMessage(session.slack_channel, msg, session.slack_thread_ts);
         } else if (summary) {
-          const msg = await benderSpeak(
-            `Finished working on ${session.ticket_id} after ${durationSec}s. Here's what happened: ${summary.slice(0, 300)}`,
-          );
-          await slackPostMessage(session.slack_channel, msg, session.slack_thread_ts);
+          // Claude had something to say but didn't post it — relay to user
+          await slackPostMessage(session.slack_channel, summary.slice(0, 3000), session.slack_thread_ts);
         } else {
           const msg = await benderSpeak(
-            `Finished a ${durationSec}s run on ${session.ticket_id} but didn't produce any visible output. Might need another nudge.`,
+            `Finished a ${durationSec}s run on ${session.ticket_id} but didn't produce visible output. Might need another nudge.`,
           );
           await slackPostMessage(session.slack_channel, msg, session.slack_thread_ts);
         }
       }
 
-      // Also update Linear if applicable
       if (session.agent_session_id && maxTurnsHit) {
         const msg = await benderSpeak(
           `Ran out of tool turns on ${session.ticket_id}. Will continue on next event.`,
