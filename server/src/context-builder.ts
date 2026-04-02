@@ -53,6 +53,7 @@ export function buildNewSessionPrompt(
     "- For lunar-lib: `git clone https://github.com/earthly/lunar-lib.git` then create a branch with prefix `bender/`.",
     "- Read the playbook from `.ai-implementation/` — it defines the workflow (spec-first or direct implementation).",
     "- Create the files, commit, push, and open a draft PR.",
+    `- **PR title format:** \`[${session.ticket_id}] Short description\` — always include the ticket ID. For spec-first PRs: \`[${session.ticket_id}][Spec Only] Short description\`.`,
     "- If you want to propose a plan or ask a question before executing, use `bender-await-reply` — it posts to the user and pauses until they reply.",
     "",
     "## After Opening a PR",
