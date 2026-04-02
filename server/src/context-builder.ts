@@ -75,8 +75,9 @@ export function buildNewSessionPrompt(
     "  `curl -s -X POST https://slack.com/api/chat.postMessage -H \"Authorization: Bearer $SLACK_BOT_TOKEN\" -H \"Content-Type: application/json\" -d '{\"channel\":\"'$BENDER_REPLY_CHANNEL'\",\"thread_ts\":\"'$BENDER_REPLY_THREAD'\",\"text\":\"your message\"}'`",
     "",
     "If you have a plan or question → bender-await-reply.",
-    "If you finished work → post a summary to Slack before exiting.",
-    "NEVER exit silently — the user is waiting to hear from you.",
+    "If you finished work → post ONE summary to Slack (e.g. 'PR is up, assigned you for review').",
+    "Do NOT narrate your process — no 'CI is running', 'waiting for checks', 'auto-approve happened'. One result message is enough.",
+    "NEVER exit silently — but also don't spam. One or two messages total per run.",
     "",
     "Begin.",
   );
