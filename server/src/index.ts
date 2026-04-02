@@ -327,13 +327,17 @@ app.post("/webhooks/slack", async (req, res) => {
   const channel = slackEvent?.channel as string;
   const inTrackedThread = isActiveThread(channel, slackEvent?.thread_ts as string);
 
-  if (isDirectMention) {
-    // Track this thread so we respond to follow-ups without @mention
+  // Also detect @mentions in message events (Slack sends both app_mention and message;
+  // if message arrives first and wins the dedup, we'd miss the mention)
+  const textMentionsBender = !isDirectMention && slackBotUserId
+    && (event.comment_body ?? "").includes(`<@${slackBotUserId}>`);
+
+  if (isDirectMention || textMentionsBender) {
     trackThread(`${channel}:${threadTs}`);
   }
 
-  if (isDirectMention || isDM || inTrackedThread) {
-    const reason = isDirectMention ? "@mention" : isDM ? "DM" : "active thread";
+  if (isDirectMention || textMentionsBender || isDM || inTrackedThread) {
+    const reason = isDirectMention ? "@mention" : textMentionsBender ? "@mention (text)" : isDM ? "DM" : "active thread";
     console.log(
       `[slack] ${reason} from ${event.slack_user}: "${event.comment_body?.slice(0, 80)}"`,
     );
