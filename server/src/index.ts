@@ -187,6 +187,10 @@ app.get("/auth/linear/status", async (_req, res) => {
 
 // --- GitHub webhook ---
 
+// Deduplicate GitHub webhook deliveries — GitHub has at-least-once delivery
+// and may retry if our response is slow. Track by event.id (entity-based).
+const recentGitHubEvents = new Set<string>();
+
 app.post("/webhooks/github", (req, res) => {
   const rawBody = (req as unknown as Record<string, unknown>)
     .rawBody as string;
@@ -204,6 +208,15 @@ app.post("/webhooks/github", (req, res) => {
     res.json({ status: "ignored" });
     return;
   }
+
+  // Dedup: skip if we've already processed this exact event recently
+  if (recentGitHubEvents.has(event.id)) {
+    console.log(`[github] Dedup: already seen ${event.id} — skipping`);
+    res.json({ status: "duplicate", event_id: event.id });
+    return;
+  }
+  recentGitHubEvents.add(event.id);
+  setTimeout(() => recentGitHubEvents.delete(event.id), 60000);
 
   console.log(
     `[github] ${eventType}/${req.body.action ?? ""} → ${event.type}` +

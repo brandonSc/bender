@@ -104,6 +104,7 @@ export interface TaskEvent {
 
   // GitHub review comment-specific
   review_comment_id?: number;
+  review_comment_ids?: number[];
   review_comment_path?: string;
 
   // Linear AgentSession-specific
