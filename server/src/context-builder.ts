@@ -74,7 +74,7 @@ export function buildNewSessionPrompt(
     "**Slack updates (for progress, milestones, results):**",
     "  `curl -s -X POST https://slack.com/api/chat.postMessage -H \"Authorization: Bearer $SLACK_BOT_TOKEN\" -H \"Content-Type: application/json\" -d '{\"channel\":\"'$BENDER_REPLY_CHANNEL'\",\"thread_ts\":\"'$BENDER_REPLY_THREAD'\",\"text\":\"your message\"}'`",
     "",
-    "If you have a plan → bender-await-reply.",
+    "If you have a plan or question → bender-await-reply.",
     "If you finished work → post a summary to Slack before exiting.",
     "NEVER exit silently — the user is waiting to hear from you.",
     "",
