@@ -108,6 +108,9 @@ function parsePullRequestReview(
     ?.full_name as string;
   const prNumber = pr.number as number;
 
+  // Ignore bot reviews (auto-approve, CodeRabbit, etc.)
+  if (author.includes("[bot]")) return null;
+
   // Map review state
   let reviewState: "approved" | "changes_requested" | "commented";
   if (state === "approved") {
