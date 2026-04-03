@@ -28,6 +28,14 @@ export function isActiveThread(channel: string, threadTs: string | undefined): b
   return true;
 }
 
+/**
+ * Stop tracking a thread (Bender was dismissed).
+ */
+export function untrackThread(channel: string, threadTs: string): void {
+  const key = `${channel}:${threadTs}`;
+  activeThreads.delete(key);
+}
+
 function cleanup(): void {
   const now = Date.now();
   for (const [key, ts] of activeThreads) {

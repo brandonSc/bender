@@ -21,7 +21,7 @@ import {
   buildCheckpointedPrompt,
 } from "./context-builder.js";
 // Linear agent communication removed — all updates go through Slack now
-import { postMessage as slackPostMessage, getThreadMessages, getChannelHistory } from "./slack-client.js";
+import { postMessage as slackPostMessage, getThreadMessages, getChannelHistory, addReaction as slackAddReaction } from "./slack-client.js";
 import { recordMessage, getUserContext, getChannelContext } from "./slack-memory.js";
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
@@ -686,16 +686,17 @@ ${conversationContext ? `## Conversation Context\n${conversationContext}\n` : ""
 ${userHistory ? `## Previous interactions with this user (across channels):\n${userHistory}\n` : ""}
 Read the conversation context carefully before responding. Reference previous messages when relevant.
 
-You have six action modes:
+You have seven action modes:
 1. **chat** — answering questions, status updates, banter. Just reply.
 2. **plan** — non-trivial work requested. Propose numbered steps, ask for approval.
 3. **work** — user approved a plan, or task is dead simple. Dispatch a background worker.
 4. **status** — user is asking about a running worker. Read its recent activity and report.
 5. **cancel** — user wants to stop a running worker. Kill it.
 6. **redirect** — user wants to stop current work AND start something else. Kill worker, dispatch new work.
+7. **dismiss** — user is telling you to leave the thread / they'll handle it from here. Reply is ignored; you'll react with :+1: and stop tracking the thread.
 
 Reply in JSON:
-{"action": "chat"|"plan"|"work"|"status"|"cancel"|"redirect", "reply": "your natural reply", "plan": "numbered steps (plan only)", "context_summary": "detailed context for the worker (plan/work/redirect only)"}
+{"action": "chat"|"plan"|"work"|"status"|"cancel"|"redirect"|"dismiss", "reply": "your natural reply", "plan": "numbered steps (plan only)", "context_summary": "detailed context for the worker (plan/work/redirect only)"}
 
 **context_summary** (for plan/work/redirect): Capture ALL relevant decisions, requirements, and constraints from the conversation. Include specific details: file paths, naming decisions, schema choices, user corrections. The worker only sees this summary + thread history, not this chat.
 
@@ -710,7 +711,13 @@ Guidelines:
 - "How's it going?" / "what are you working on?" when a worker IS running → status
 - "Stop" / "cancel" / "never mind" when a worker is running → cancel
 - "Actually do X instead" / "forget that, do Y" when a worker is running → redirect
+- "We'll take it from here" / "thanks bender" / "you're dismissed" / "we got it" → dismiss
 - When in doubt between plan and work → plan. Better to confirm than go down a rabbit hole.
+
+**Thread awareness — know when you're NOT being spoken to:**
+- If someone @mentions a specific person other than you ("@corey what do you think?"), that's NOT directed at you → ignore, do NOT reply.
+- If people are having a conversation with each other and you're just in the thread, stay quiet unless directly addressed or you have something genuinely useful to add.
+- Only jump in if someone @mentions you, says "bender", or asks a question that's clearly for you.
 
 Thread context: Each thread is tied to a specific task. If the user mentions a different PR or repo, point it out.
 Plans should be concise numbered steps, not essays.
@@ -824,6 +831,21 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
           event.slack_thread_ts = redirectThreadTs;
           await this.handleSlackWork(worker, event);
           console.log(`[W${worker.id}] ← redirected to new work`);
+          break;
+        }
+
+        case "dismiss": {
+          // React with thumbs up on the dismiss message and stop tracking this thread
+          const rawEvt = (event.raw as Record<string, unknown>)?.event as Record<string, unknown> | undefined;
+          const dismissMsgTs = rawEvt?.ts as string;
+          if (event.slack_channel && dismissMsgTs) {
+            await slackAddReaction(event.slack_channel, dismissMsgTs, "+1");
+          }
+          if (event.slack_channel && event.slack_thread_ts) {
+            const { untrackThread } = await import("./slack-threads.js");
+            untrackThread(event.slack_channel, event.slack_thread_ts);
+          }
+          console.log(`[W${worker.id}] ← dismissed from thread ${event.slack_thread_ts}`);
           break;
         }
 
