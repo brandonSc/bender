@@ -7,6 +7,7 @@ import { saveSession, findSessionForEvent, listActiveSessions, createSession, ge
 import { invokeClaude, spawnClaude } from "./claude-executor.js";
 import {
   saveWorker,
+  getWorker,
   getRunningWorkerForThread,
   cancelWorker,
   listRunningWorkers,
@@ -1133,8 +1134,28 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
         }
       }
 
-      // Update worker state file
-      const workerState = getRunningWorkerForThread(channel, threadTs);
+      // Transition session phase/status (mirrors queue-based worker logic)
+      if (workSession.phase === "starting" && workSession.pr_number) {
+        const isSpec = /\bspec\b/i.test(workSession.ticket_title);
+        workSession.phase = isSpec ? "spec_review" : "impl_review";
+      }
+      if (result.killed) {
+        workSession.status = "parked";
+      } else if (result.exitCode === 0) {
+        // Completed successfully — park the session (it's idle until next event)
+        workSession.status = "parked";
+        // Slack thread tasks with no PR and no ticket are one-shots — archive them
+        if (!workSession.pr_number && workSession.ticket_id.startsWith("slack-thread-")) {
+          workSession.phase = "done";
+        }
+      } else {
+        workSession.status = "parked";
+      }
+      saveSession(workSession);
+
+      // Update worker state file — use getWorker() not getRunningWorkerForThread()
+      // because the PID is already dead by the time this callback runs (we're inside child.on('close'))
+      const workerState = getWorker(channel, threadTs);
       if (workerState) {
         workerState.status = result.killed ? "cancelled" : (result.exitCode === 0 ? "done" : "error");
         workerState.exitCode = result.exitCode;

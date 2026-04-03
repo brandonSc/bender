@@ -16,7 +16,7 @@ import {
   parseSlackEvent,
 } from "./webhooks/slack.js";
 import { TaskManager } from "./task-manager.js";
-import { listActiveSessions } from "./session-store.js";
+import { listActiveSessions, gcStaleSessions } from "./session-store.js";
 import {
   getLinearToken,
   getAuthorizationUrl,
@@ -340,6 +340,23 @@ app.post("/webhooks/slack", async (req, res) => {
   // Must respond within 3 seconds — process async
   res.json({ ok: true });
 
+  // Auto-track threads where Bender posts (catches cron posts, worker replies, etc.)
+  // This runs BEFORE parseSlackEvent since bot messages are normally filtered out.
+  const rawSlackEvt = req.body.event as Record<string, unknown> | undefined;
+  if (
+    rawSlackEvt?.type === "message" &&
+    rawSlackEvt?.user === slackBotUserId &&
+    slackBotUserId &&
+    (rawSlackEvt?.channel_type as string) !== "im"
+  ) {
+    const botChannel = rawSlackEvt.channel as string;
+    const botThreadTs = (rawSlackEvt.thread_ts as string) ?? (rawSlackEvt.ts as string);
+    if (botChannel && botThreadTs) {
+      trackThread(`${botChannel}:${botThreadTs}`);
+      console.log(`[slack] Auto-tracked bot thread: ${botChannel}:${botThreadTs}`);
+    }
+  }
+
   const event = parseSlackEvent(req.body, slackBotUserId);
   if (!event) {
     const slackEvt = req.body.event as Record<string, unknown> | undefined;
@@ -490,4 +507,12 @@ app.listen(PORT, () => {
 
   // Check for restart notification after boot (slight delay so Slack auth resolves first)
   setTimeout(() => checkRestartNotification(), 3000);
+
+  // Session GC: archive stale sessions every hour
+  setInterval(() => {
+    const archived = gcStaleSessions();
+    if (archived > 0) console.log(`[gc] Archived ${archived} stale sessions`);
+  }, 60 * 60 * 1000);
+  // Run once at startup too (after a short delay)
+  setTimeout(() => gcStaleSessions(), 5000);
 });

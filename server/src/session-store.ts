@@ -168,6 +168,44 @@ export function findSessionForEvent(event: {
   return null;
 }
 
+/**
+ * Archive stale sessions stuck in "starting" phase with no PR for >24h,
+ * and sessions marked "done" for >1h.
+ */
+export function gcStaleSessions(): number {
+  const sessions = listActiveSessions();
+  const now = Date.now();
+  const STALE_STARTING_MS = 24 * 60 * 60 * 1000; // 24h
+  const STALE_DONE_MS = 60 * 60 * 1000; // 1h
+  let archived = 0;
+
+  for (const s of sessions) {
+    const age = now - new Date(s.last_activity_at).getTime();
+
+    // Archive slack-thread sessions stuck in "starting" with no PR for >24h
+    if (
+      s.phase === "starting" &&
+      !s.pr_number &&
+      s.ticket_id.startsWith("slack-thread-") &&
+      age > STALE_STARTING_MS
+    ) {
+      console.log(`[gc] Archiving stale session: ${s.ticket_id} (starting, no PR, ${Math.round(age / 3600000)}h old)`);
+      archiveSession(s.ticket_id);
+      archived++;
+      continue;
+    }
+
+    // Archive sessions marked "done" for >1h
+    if (s.phase === "done" && age > STALE_DONE_MS) {
+      console.log(`[gc] Archiving done session: ${s.ticket_id} (${Math.round(age / 3600000)}h old)`);
+      archiveSession(s.ticket_id);
+      archived++;
+    }
+  }
+
+  return archived;
+}
+
 function updateIndexes(session: Session): void {
   // Ticket index
   const ticketLink = resolve(indexByTicketDir(), session.ticket_id);
