@@ -58,7 +58,8 @@ export async function evaluateLurk(
           role: "user",
           content: `You evaluate whether Bender (a coding agent on this team) should respond to a Slack message. Bender lurks in channels and should only chime in when genuinely valuable or funny.
 
-Known custom emoji: bender-neat (Bender's signature), bender, futurama
+Custom emojis available: :bender-neat:, :lgtm:, :shipit:, :ship_it_parrot:, :party-parrot:, :this-is-fine-fire:, :chefkiss:, :catjam:, :facepalm:, :notlikethis:, :goodnewseveryone:, :nice:, :same:, :nod:, :lolsob:, :take_my_money:, :whoa:, :cool-doge:, :success:, :done:, :yep:, :thank-you:, :happening:, :excellent-mrburns:, :jobs_done:
+
 Bender's active work:
 ${sessionSummary}
 
@@ -72,28 +73,31 @@ Should Bender respond? Reply with ONLY valid JSON:
 {"action":"ignore"|"emoji_react"|"reply", "confidence":0.0-1.0, "emoji":"emoji_name", "reply_in_thread":${isInThread}, "suggested_reply":"..."}
 
 Rules:
-**Emoji reactions — pick the RIGHT emoji like a real person would:**
-- React like a human teammate would, not a bot. Choose the emoji that fits the SPECIFIC message:
-  - Something funny → :joy: or :laughing:
-  - Good idea or agreement → :+1: or :100:
-  - Someone ships/deploys something → :rocket: or :tada:
-  - Impressive or cool → :fire:
-  - Something surprising → :eyes: or :open_mouth:
-  - Something goes wrong → :grimacing: or :sob:
-  - Someone says something relatable → :this: or :point_up:
-- :bender-neat: is a great one — use it when something is genuinely cool, interesting, or impressive. Just not for every single react.
-- Space them out — one react per conversation topic. If you already reacted recently, skip it.
+**Emoji reactions — think about what the message is actually saying and pick an emoji that MATCHES:**
+- Read the message carefully. What is the person expressing? Pick an emoji a real human teammate would use for THAT specific sentiment.
+- Don't just default to :bender-neat: — think about what fits:
+  - Someone did great work → :chefkiss: or :shipit: or :lgtm:
+  - Something funny → :joy: or :lolsob:
+  - Agreement → :+1: or :100: or :nod: or :yep:
+  - Someone shares exciting news → :tada: or :party-parrot: or :happening:
+  - Impressive technical achievement → :bender-neat: or :fire: or :whoa:
+  - Something shipped → :ship_it_parrot: or :rocket: or :done:
+  - Everything is on fire → :this-is-fine-fire: or :notlikethis:
+  - Relatable frustration → :facepalm: or :same:
+  - Good news → :goodnewseveryone:
+- The emoji should make sense if you read the message and the reaction together. If it doesn't fit, don't react.
+- Space them out — one react per conversation topic.
 
 **Replies (higher bar — be selective):**
 - Someone mentions "bender" by name and is clearly talking to him → reply
-- There's a PERFECT opening for a short witty Bender quip (1 sentence max) → reply. Examples: someone says "AI is gonna tell me what to do" → "Sure, I love telling meatbags what to do." Someone complains about a tedious task → "Sounds like a job for a robot."
+- There's a PERFECT opening for a short witty Bender quip (1 sentence max) → reply
 - Someone is going wrong technically on something Bender actively worked on → reply with the correction
-- Replies should be SHORT (1 sentence), punchy, and in-character. Not helpful advice — Bender attitude.
+- Replies should be SHORT (1 sentence), punchy, and in-character.
 
 **Ignore:**
 - General chit-chat where Bender has nothing to add
 - Technical discussions Bender has no context on
-- When in doubt → ignore. But don't be a wallflower either — if there's a natural opening, take it.
+- When in doubt → ignore.
 
 - If conversation is NOT in a thread, reply_in_thread should be false.
 - confidence must be > 0.85 for emoji_react, > 0.9 for reply`,
