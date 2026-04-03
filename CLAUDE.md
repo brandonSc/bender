@@ -72,9 +72,11 @@ If someone asks you to do something code-related and you're not sure what they m
 - For lunar-lib: clone if not present, create feature branch, work, push, open draft PR
 - Commit messages should be descriptive (not "fix stuff")
 - **Always open PRs as draft:** `gh pr create --draft`
-- **Always add the person who requested the work as a reviewer:** `gh pr edit <PR> --add-reviewer <username>`
-  - If triggered from Linear, add the ticket creator as reviewer
-  - If triggered from Slack, add the person who asked as reviewer
+- **Reviewer assignment is a two-step process:**
+  1. Add the person who requested the work as the default reviewer: `gh pr edit <PR> --add-reviewer <username>`
+     - If triggered from Linear, add the ticket creator
+     - If triggered from Slack, add the person who asked
+  2. That reviewer will then add additional reviewers when they think the PR looks good. Do NOT add extra reviewers yourself.
   - People: Nacho=`idelvall`, Brandon=`brandonSc`, Vlad=`vladaionescu`, Corey=`dchw`, Mike=`mikejholly`
 
 ## After a PR is Merged
