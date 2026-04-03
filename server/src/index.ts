@@ -26,6 +26,7 @@ import { getViewer } from "./linear-client.js";
 import { postMessage, addReaction } from "./slack-client.js";
 import { evaluateLurk, canReactInChannel, recordReaction } from "./slack-evaluator.js";
 import { trackThread, isActiveThread } from "./slack-threads.js";
+import { recordMessage } from "./slack-memory.js";
 
 // --- Bootstrap ---
 
@@ -126,6 +127,39 @@ app.get("/internal/github-token", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
+});
+
+// --- Internal: track a thread started by cron/external process (localhost only) ---
+
+app.post("/internal/track-thread", (req, res) => {
+  const ip = req.ip ?? req.socket.remoteAddress ?? "";
+  if (!ip.includes("127.0.0.1") && !ip.includes("::1") && !ip.includes("::ffff:127.0.0.1")) {
+    res.status(403).json({ error: "localhost only" });
+    return;
+  }
+
+  const { channel, thread_ts, text } = req.body as {
+    channel?: string;
+    thread_ts?: string;
+    text?: string;
+  };
+
+  if (!channel || !thread_ts) {
+    res.status(400).json({ error: "Missing channel or thread_ts" });
+    return;
+  }
+
+  // Register in the in-memory thread tracker (24h TTL)
+  const key = `${channel}:${thread_ts}`;
+  trackThread(key);
+
+  // Also record in disk-based slack-memory so context is available
+  if (text) {
+    recordMessage(channel, "bender", text, `cron:${thread_ts}`);
+  }
+
+  console.log(`[internal] Tracked cron thread: ${key}`);
+  res.json({ status: "ok", tracked: key });
 });
 
 // --- Linear OAuth ---
