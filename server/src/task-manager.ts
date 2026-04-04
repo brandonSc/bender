@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, unlinkSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from "node:fs";
+import { exec } from "node:child_process";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Config, TaskEvent, Worker, Session } from "./types.js";
@@ -27,6 +28,49 @@ import { recordMessage, getUserContext, getChannelContext } from "./slack-memory
 import { getAppOctokit, getInstallationToken } from "./github-auth.js";
 import { storePlan, getPendingPlan, consumePlan, isApproval } from "./slack-plans.js";
 import { getBenderDir } from "./config.js";
+
+/**
+ * Check if a worker left a pending-restart.json file.
+ * If found and all workers are idle, restart the server via pm2.
+ */
+function checkPendingRestart(): void {
+  const pendingPath = resolve(homedir(), ".bender", "pending-restart.json");
+  if (!existsSync(pendingPath)) return;
+
+  const running = listRunningWorkers();
+  if (running.length > 0) {
+    console.log(`[restart] Pending restart found but ${running.length} worker(s) still running — deferring`);
+    return;
+  }
+
+  console.log(`[restart] Pending restart found and all workers idle — restarting`);
+
+  try {
+    const pending = JSON.parse(readFileSync(pendingPath, "utf-8")) as {
+      reason?: string;
+      channel?: string;
+      thread_ts?: string;
+    };
+
+    // Write restart-notification.json so the server announces on boot
+    const notifPath = resolve(homedir(), ".bender", "restart-notification.json");
+    writeFileSync(notifPath, JSON.stringify({
+      channel: pending.channel || "",
+      thread_ts: pending.thread_ts || "",
+      reason: pending.reason || "pending restart (worker deferred)",
+      requested_at: Math.floor(Date.now() / 1000),
+    }, null, 2));
+
+    unlinkSync(pendingPath);
+
+    // Fire-and-forget: pm2 will kill this process and start a new one
+    exec("pm2 restart bender", (err) => {
+      if (err) console.error("[restart] pm2 restart failed:", err);
+    });
+  } catch (err) {
+    console.error("[restart] Failed to process pending restart:", err);
+  }
+}
 
 interface WaitingState {
   channel: string;
@@ -1172,6 +1216,9 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
         const msg = await benderSpeak(`Hit an error (exit ${result.exitCode}) after ${durationSec}s.`);
         await slackPostMessage(channel, msg, threadTs);
       }
+
+      // Check if this worker deferred a server restart
+      checkPendingRestart();
     }, githubToken, extraEnv);
 
     // Track the background worker

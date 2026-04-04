@@ -68,22 +68,26 @@ When adding or modifying collectors/policies in `earthly/lunar-lib`:
 
 ## Restarting the Server
 
-When you need to restart (e.g. after code changes to the server):
+**NEVER call `bender-restart`, `pm2 restart`, or kill the server process directly.**
+You are a child process of the server — if you kill the server, your own completion
+callback never fires and your worker state gets stuck as "running" forever.
+
+Instead, **defer the restart** by writing a file and exiting cleanly:
 
 ```bash
-# Safe restart — checks for active workers first, aborts if any are busy:
-bender-restart "reason for restart"
-
-# Force restart — kills active workers mid-task (use only if truly necessary):
-bender-restart --force "reason for restart"
+# After building your changes (cd ~/bender/server && npm run build):
+cat > ~/.bender/pending-restart.json << EOF
+{
+  "reason": "your reason here",
+  "channel": "$BENDER_REPLY_CHANNEL",
+  "thread_ts": "$BENDER_REPLY_THREAD"
+}
+EOF
+# Then exit normally. The server will restart itself after you finish.
 ```
 
-The script also writes a notification file so the server announces it's back
-online to whoever requested the restart. Set `BENDER_REPLY_CHANNEL` and
-`BENDER_REPLY_THREAD` in your env so the notification goes to the right thread.
-
-**NEVER restart with active workers unless it's urgent.** Workers running mid-task
-will be killed and their work lost. Check status first: `curl -s localhost:3000/status | jq '.workers'`
+The server checks for `pending-restart.json` after every worker completes.
+If all workers are idle, it processes the restart automatically.
 
 ## Common Gotchas
 
