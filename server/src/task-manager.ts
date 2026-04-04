@@ -63,9 +63,9 @@ function checkPendingRestart(): void {
 
     unlinkSync(pendingPath);
 
-    // Fire-and-forget: pm2 will kill this process and start a new one
-    exec("pm2 restart bender", (err) => {
-      if (err) console.error("[restart] pm2 restart failed:", err);
+    // Fire-and-forget: systemd will kill this process and start a new one
+    exec("sudo systemctl restart bender", (err) => {
+      if (err) console.error("[restart] systemctl restart failed:", err);
     });
   } catch (err) {
     console.error("[restart] Failed to process pending restart:", err);

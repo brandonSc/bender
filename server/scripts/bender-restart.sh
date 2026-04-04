@@ -81,8 +81,8 @@ jq -n \
 echo "Restart notification saved."
 echo "Reason: $REASON"
 
-# Restart via pm2
+# Restart via systemd
 echo "Restarting bender..."
-pm2 restart bender
+sudo systemctl restart bender
 
 echo "Restart issued. Server will notify on boot."
