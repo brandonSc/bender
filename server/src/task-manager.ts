@@ -679,7 +679,17 @@ export class TaskManager {
         return `  Thread ${w.threadTs}: "${w.description}" (${Math.floor(elapsed / 60)}m${elapsed % 60}s)`;
       }).join("\n")}`;
     } else {
-      workerStatus = "No background workers running.";
+      // Check for recently completed workers in this thread
+      const completedWorker = event.slack_thread_ts && event.slack_channel
+        ? getWorker(event.slack_channel, event.slack_thread_ts)
+        : null;
+      if (completedWorker && completedWorker.status !== "running") {
+        const elapsed = completedWorker.durationMs ? Math.round(completedWorker.durationMs / 1000) : 0;
+        const lastTools = getWorkerLogTail(completedWorker, 5);
+        workerStatus = `**Last worker in this thread finished** (status: ${completedWorker.status}, ran for ${elapsed}s, exit code: ${completedWorker.exitCode}):\n  Task: "${completedWorker.description}"\n  Last tool calls:\n${lastTools}\n\nReport what the worker did based on the tool calls. If it exited with errors, mention that.`;
+      } else {
+        workerStatus = "No background workers running.";
+      }
     }
 
     // Fetch live conversation context from Slack
@@ -1208,13 +1218,29 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
         saveWorker(workerState);
       }
 
-      // Post server-side messages for errors/timeouts
+      // Check if Claude posted to Slack during its run
+      const claudePosted = result.stdout.includes("chat.postMessage")
+        || result.stderr.includes("chat.postMessage")
+        || result.stdout.includes("bender-await-reply")
+        || result.stderr.includes("bender-await-reply");
+
       if (result.killed) {
         const msg = await benderSpeak(`Hit the time limit after ${durationSec}s. Work is partially done.`);
         await slackPostMessage(channel, msg, threadTs);
       } else if (result.exitCode !== 0) {
         const msg = await benderSpeak(`Hit an error (exit ${result.exitCode}) after ${durationSec}s.`);
         await slackPostMessage(channel, msg, threadTs);
+      } else if (!claudePosted) {
+        // Worker finished successfully but never posted to Slack — relay its output
+        const output = result.stdout.trim();
+        if (output) {
+          await slackPostMessage(channel, output.slice(0, 3000), threadTs);
+        } else {
+          const msg = await benderSpeak(
+            `Finished a ${durationSec}s run but didn't produce visible output. Might need another nudge.`,
+          );
+          await slackPostMessage(channel, msg, threadTs);
+        }
       }
 
       // Check if this worker deferred a server restart
