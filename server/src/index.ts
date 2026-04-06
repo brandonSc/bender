@@ -1,5 +1,6 @@
-import { readFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { homedir } from "node:os";
 import express from "express";
 import { loadConfig, loadSecrets } from "./config.js";
 import { initGitHubAuth, getAppOctokit, getInstallationToken } from "./github-auth.js";
@@ -26,6 +27,26 @@ import { getViewer } from "./linear-client.js";
 import { postMessage, addReaction } from "./slack-client.js";
 import { evaluateLurk, canReactInChannel, recordReaction } from "./slack-evaluator.js";
 import { trackThread, isActiveThread } from "./slack-threads.js";
+import { cleanupWorkers } from "./worker-tracker.js";
+
+function cleanupOldLogs(): void {
+  const logsDir = resolve(homedir(), ".bender", "logs");
+  if (!existsSync(logsDir)) return;
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
+  let cleaned = 0;
+  try {
+    for (const f of readdirSync(logsDir)) {
+      const fp = resolve(logsDir, f);
+      try {
+        if (statSync(fp).mtimeMs < cutoff) {
+          unlinkSync(fp);
+          cleaned++;
+        }
+      } catch {}
+    }
+    if (cleaned > 0) console.log(`[gc] Cleaned ${cleaned} old log files`);
+  } catch {}
+}
 import { recordMessage } from "./slack-memory.js";
 
 // --- Bootstrap ---
@@ -508,11 +529,17 @@ app.listen(PORT, () => {
   // Check for restart notification after boot (slight delay so Slack auth resolves first)
   setTimeout(() => checkRestartNotification(), 3000);
 
-  // Session GC: archive stale sessions every hour
+  // Hourly cleanup: worker files, logs, and one-shot sessions
   setInterval(() => {
+    cleanupWorkers();
+    cleanupOldLogs();
     const archived = gcStaleSessions();
     if (archived > 0) console.log(`[gc] Archived ${archived} stale sessions`);
   }, 60 * 60 * 1000);
-  // Run once at startup too (after a short delay)
-  setTimeout(() => gcStaleSessions(), 5000);
+  // Run once at startup too
+  setTimeout(() => {
+    cleanupWorkers();
+    cleanupOldLogs();
+    gcStaleSessions();
+  }, 5000);
 });
