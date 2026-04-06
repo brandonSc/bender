@@ -1218,11 +1218,14 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
         saveWorker(workerState);
       }
 
-      // Check if Claude posted to Slack during its run
-      const claudePosted = result.stdout.includes("chat.postMessage")
-        || result.stderr.includes("chat.postMessage")
-        || result.stdout.includes("bender-await-reply")
-        || result.stderr.includes("bender-await-reply");
+      // Check if Claude posted to Slack during its run by scanning the log file
+      let claudePosted = false;
+      try {
+        const logContent = existsSync(spawned.logFile) ? readFileSync(spawned.logFile, "utf-8") : "";
+        claudePosted = logContent.includes("chat.postMessage")
+          || logContent.includes("bender-await-reply");
+      } catch {}
+
 
       if (result.killed) {
         const msg = await benderSpeak(`Hit the time limit after ${durationSec}s. Work is partially done.`);
