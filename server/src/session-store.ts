@@ -138,20 +138,20 @@ export function findSessionForEvent(event: {
   if (event.pr_number) {
     const sessions = listActiveSessions();
 
-    // Exact PR match on primary — require repo match when available
+    // Exact PR match on primary — require repo match when both are available
     const exact = sessions.find(
       (s) =>
         s.pr_number === event.pr_number &&
-        s.repo === event.repo,
+        (event.repo ? s.repo === event.repo : true),
     );
     if (exact) return exact;
 
-    // Match on additional_prs — also require exact repo match
+    // Match on additional_prs
     const byAdditional = sessions.find((s) =>
       s.additional_prs?.some(
         (ap) =>
           ap.pr_number === event.pr_number &&
-          ap.repo === event.repo,
+          (event.repo ? ap.repo === event.repo : true),
       ),
     );
     if (byAdditional) return byAdditional;
