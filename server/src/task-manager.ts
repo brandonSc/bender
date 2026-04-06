@@ -382,6 +382,7 @@ export class TaskManager {
     worker.busy = true;
     worker.current_ticket = result.session.ticket_id;
     worker.current_description = `${result.session.ticket_id}: ${result.session.ticket_title}`;
+    const dispatchStartedAt = Date.now();
 
     console.log(
       `[W${worker.id}] → ${result.session.ticket_id} (${result.session.phase}) event=${event.type}`,
@@ -404,11 +405,10 @@ export class TaskManager {
       }
       saveSession(result.session);
     } finally {
-      // Before releasing the worker, drain any queued GitHub comment events for
-      // this same ticket that were enqueued BEFORE or during this dispatch.
-      // The worker already read ALL PR comments, so these are redundant.
+      // Drain queued events that arrived BEFORE this worker started (already handled).
+      // Events that arrived DURING the run are new and must be processed.
       if (event.source === "github" && result?.session?.ticket_id) {
-        this.drainStaleGitHubEvents(result.session.ticket_id, result.session.pr_number);
+        this.drainStaleGitHubEvents(result.session.ticket_id, result.session.pr_number, dispatchStartedAt);
       }
       worker.busy = false;
       worker.current_ticket = null;
@@ -418,25 +418,26 @@ export class TaskManager {
   }
 
   /**
-   * Remove queued GitHub comment/review events for a ticket whose worker just finished.
-   * The worker reads ALL PR comments during its run, so any queued events that were
-   * part of the same "batch" of reviewer activity are already handled.
+   * Remove queued GitHub comment/review events for a ticket whose worker just finished,
+   * but ONLY events that arrived BEFORE the worker started. Events that arrived during
+   * the run are NEW and must be processed.
    */
-  private drainStaleGitHubEvents(ticketId: string, prNumber: number | null | undefined): void {
+  private drainStaleGitHubEvents(ticketId: string, prNumber: number | null | undefined, workerStartedAt: number): void {
     const staleTypes = new Set<string>(["reviewer_comment", "pr_review"]);
     const before = this.queue.length;
     this.queue = this.queue.filter((item) => {
       if (item.event.source !== "github") return true;
       if (!staleTypes.has(item.event.type)) return true;
-      // Match by ticket ID or PR number
-      const itemTicket = item.event.ticket_id ?? this.resolveTicketForPR(item.event.pr_number);
+      // Only drain events that were queued BEFORE the worker started
+      if (item.received_at > workerStartedAt) return true;
+      const itemTicket = item.event.ticket_id ?? this.resolveTicketForPR(item.event.pr_number, item.event.repo);
       if (itemTicket === ticketId) return false;
       if (prNumber && item.event.pr_number === prNumber) return false;
       return true;
     });
     const drained = before - this.queue.length;
     if (drained > 0) {
-      console.log(`[queue] Drained ${drained} stale GitHub event(s) for ${ticketId} — already handled by previous dispatch`);
+      console.log(`[queue] Drained ${drained} stale GitHub event(s) for ${ticketId} (pre-worker only)`);
     }
   }
 
