@@ -529,13 +529,13 @@ app.listen(PORT, () => {
   // Check for restart notification after boot (slight delay so Slack auth resolves first)
   setTimeout(() => checkRestartNotification(), 3000);
 
-  // Hourly cleanup: worker files, logs, and one-shot sessions
+  // Daily cleanup: worker files, logs, and one-shot sessions
   setInterval(() => {
     cleanupWorkers();
     cleanupOldLogs();
     const archived = gcStaleSessions();
     if (archived > 0) console.log(`[gc] Archived ${archived} stale sessions`);
-  }, 60 * 60 * 1000);
+  }, 24 * 60 * 60 * 1000);
   // Run once at startup too
   setTimeout(() => {
     cleanupWorkers();
