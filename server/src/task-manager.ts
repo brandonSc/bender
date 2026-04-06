@@ -763,6 +763,7 @@ Guidelines:
 - "Can you look into why CI is failing?" → plan
 - **User modifies the plan in ANY way** (corrects, simplifies, expands, adds context, changes scope, provides a link/ticket they forgot, says "actually..." or "I meant...") → **plan** (acknowledge what changed, present revised understanding, ask for go-ahead again). Do NOT jump to work — the user is still refining.
 - "go ahead" / "do it" / "yes" / "ship it" (short affirmative with no new info) → work
+- **If the message ends with a question or asks "what should we...", "what else...", "anything else..." → that's PLANNING, not a go-ahead.** Do NOT dispatch work when the user is still thinking out loud or asking for your input. Respond with chat or plan.
 - "How's it going?" / "what are you working on?" when a worker IS running → status
 - "Stop" / "cancel" / "never mind" when a worker is running → cancel
 - "Actually do X instead" / "forget that, do Y" when a worker is running → redirect
