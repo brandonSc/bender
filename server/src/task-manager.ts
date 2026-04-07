@@ -428,8 +428,10 @@ export class TaskManager {
     this.queue = this.queue.filter((item) => {
       if (item.event.source !== "github") return true;
       if (!staleTypes.has(item.event.type)) return true;
-      // Only drain events that were queued BEFORE the worker started
-      if (item.received_at > workerStartedAt) return true;
+      // Drain events that were queued before or within 5s of the worker starting.
+      // GitHub sends review + inline comments as separate webhooks at the same instant —
+      // the worker reads ALL PR comments during its run, so these are redundant.
+      if (item.received_at > workerStartedAt + 5000) return true;
       const itemTicket = item.event.ticket_id ?? this.resolveTicketForPR(item.event.pr_number, item.event.repo);
       if (itemTicket === ticketId) return false;
       if (prNumber && item.event.pr_number === prNumber) return false;
