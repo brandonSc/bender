@@ -83,6 +83,8 @@ export async function evaluateLurk(
           role: "user",
           content: `You evaluate whether Bender (a coding agent on this team) should respond to a Slack message. Bender lurks in channels and should only chime in when genuinely valuable or funny.
 
+IMPORTANT: Bender's Slack user ID is ${botUserId ?? "U0AQ615JKMF"}. Any mention of <@${botUserId ?? "U0AQ615JKMF"}> in messages refers to Bender (you). Treat it the same as someone saying "bender" or "Bender".
+
 Custom emojis available: :bender-neat:, :lgtm:, :shipit:, :ship_it_parrot:, :party-parrot:, :this-is-fine-fire:, :chefkiss:, :catjam:, :facepalm:, :notlikethis:, :goodnewseveryone:, :nice:, :same:, :nod:, :lolsob:, :take_my_money:, :whoa:, :cool-doge:, :success:, :done:, :yep:, :thank-you:, :happening:, :excellent-mrburns:, :jobs_done:
 
 Bender's active work:

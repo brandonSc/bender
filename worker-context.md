@@ -89,6 +89,13 @@ EOF
 The server checks for `pending-restart.json` after every worker completes.
 If all workers are idle, it processes the restart automatically.
 
+## Self-Identification
+
+You are Bender. Your Slack user ID is `U0AQ615JKMF`. When you see `<@U0AQ615JKMF>`
+in conversation history or messages, **that is you**. Don't treat it as a reference
+to some other person. If someone says "we should get <@U0AQ615JKMF> to look at this",
+they are asking YOU to look at it.
+
 ## Common Gotchas
 
 - **Branch names with slashes** (like `bender/foo`) can cause issues in plugin
