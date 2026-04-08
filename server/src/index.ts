@@ -24,7 +24,7 @@ import {
   exchangeCode,
 } from "./linear-auth.js";
 import { getViewer } from "./linear-client.js";
-import { postMessage, addReaction } from "./slack-client.js";
+import { postMessage, addReaction, getReactions } from "./slack-client.js";
 import { evaluateLurk, canReactInChannel, recordReaction } from "./slack-evaluator.js";
 import { trackThread, isActiveThread } from "./slack-threads.js";
 import { cleanupWorkers } from "./worker-tracker.js";
@@ -419,11 +419,19 @@ app.post("/webhooks/slack", async (req, res) => {
     if (!secrets.SLACK_BOT_TOKEN) return;
 
     try {
+      // Fetch existing reactions for herd mentality detection
+      const existingReactions = await getReactions(
+        event.slack_channel!,
+        (slackEvent.ts as string) ?? "",
+      );
+
       const decision = await evaluateLurk(
         event.slack_channel!,
         event.comment_body ?? "",
         (slackEvent.ts as string) ?? "",
         event.slack_thread_ts,
+        existingReactions,
+        slackBotUserId,
       );
 
       if (decision.action === "emoji_react" && decision.emoji) {

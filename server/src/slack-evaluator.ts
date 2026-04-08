@@ -1,4 +1,4 @@
-import { getChannelHistory } from "./slack-client.js";
+import { getChannelHistory, type MessageReaction } from "./slack-client.js";
 import { listActiveSessions } from "./session-store.js";
 
 // Cooldown: track recent reactions per channel to avoid spamming
@@ -28,6 +28,8 @@ export async function evaluateLurk(
   message: string,
   messageTs: string,
   threadTs?: string,
+  existingReactions?: MessageReaction[],
+  botUserId?: string,
 ): Promise<LurkDecision> {
   try {
     const recentMessages = await getChannelHistory(channel, 8);
@@ -43,6 +45,26 @@ export async function evaluateLurk(
       .join("\n") || "No active work.";
 
     const isInThread = !!threadTs;
+
+    // Herd mentality: count unique human reactors (exclude bot)
+    const humanReactions = (existingReactions ?? []).map((r) => ({
+      ...r,
+      users: r.users.filter((u) => u !== botUserId),
+    })).filter((r) => r.users.length > 0);
+
+    const uniqueReactors = new Set(humanReactions.flatMap((r) => r.users));
+    const herdActive = uniqueReactors.size >= 2;
+
+    let herdContext = "";
+    if (humanReactions.length > 0) {
+      const reactionSummary = humanReactions
+        .map((r) => `:${r.name}: (${r.users.length} people)`)
+        .join(", ");
+      herdContext = `\nExisting reactions on this message: ${reactionSummary}`;
+      if (herdActive) {
+        herdContext += `\n${uniqueReactors.size} teammates have already reacted — this is a popular message. Piling on with a reaction is natural here. Prefer using one of the existing reaction emojis to join the crowd, but a different fitting emoji is fine too.`;
+      }
+    }
 
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -66,7 +88,7 @@ ${sessionSummary}
 Recent channel messages:
 ${context}
 
-New message: ${message}
+New message: ${message}${herdContext}
 Is conversation in a thread: ${isInThread}
 
 Should Bender respond? Reply with ONLY valid JSON:
@@ -87,7 +109,11 @@ Rules:
   - Good news → :goodnewseveryone:
 - The emoji should make sense if you read the message and the reaction together. If it doesn't fit, don't react.
 - Space them out — one react per conversation topic.
-
+${herdActive ? `\n**Herd mentality — others are reacting, join in:**
+- Multiple teammates already reacted to this message. It's natural to pile on.
+- PREFER using one of the emojis others already used — adding to an existing reaction feels more human than picking something unique.
+- Your confidence can be higher here since the crowd has already validated this is reaction-worthy.
+` : ""}
 **Replies (higher bar — be selective):**
 - Someone mentions "bender" by name and is clearly talking to him → reply
 - There's a PERFECT opening for a short witty Bender quip (1 sentence max) → reply
@@ -101,7 +127,7 @@ Rules:
 
 - If conversation is NOT in a thread, reply_in_thread should be false.
 - Be SELECTIVE. Most messages should be "ignore". Only react if the emoji is an obvious, natural fit — not just vaguely related.
-- confidence must be > 0.92 for emoji_react, > 0.95 for reply. Set confidence below these thresholds unless you're genuinely sure.
+- confidence must be > ${herdActive ? "0.75" : "0.92"} for emoji_react, > 0.95 for reply. Set confidence below these thresholds unless you're genuinely sure.
 - When in doubt, ignore. Less is more — a well-timed reaction is worth ten random ones.`,
         }],
       }),
@@ -122,9 +148,11 @@ Rules:
       return { action: "ignore", confidence: 0, reply_in_thread: false };
     }
     const decision = JSON.parse(jsonMatch[0]) as LurkDecision;
-    console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} msg="${message.slice(0, 60)}"`);
+    console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} herd=${herdActive} msg="${message.slice(0, 60)}"`);
 
-    const threshold = decision.action === "emoji_react" ? 0.92 : 0.95;
+    // Lower the emoji threshold when the herd is active (2+ humans already reacted)
+    const emojiThreshold = herdActive ? 0.75 : 0.92;
+    const threshold = decision.action === "emoji_react" ? emojiThreshold : 0.95;
     if (decision.confidence < threshold) {
       return { action: "ignore", confidence: decision.confidence, reply_in_thread: false };
     }

@@ -101,3 +101,19 @@ export async function getChannelHistory(
   });
   return (data.messages as Array<{ user: string; text: string; ts: string }>) ?? [];
 }
+
+export interface MessageReaction {
+  name: string;
+  count: number;
+  users: string[];
+}
+
+export async function getReactions(
+  channel: string,
+  timestamp: string,
+): Promise<MessageReaction[]> {
+  const data = await slackGet("reactions.get", { channel, timestamp });
+  const message = data.message as Record<string, unknown> | undefined;
+  const reactions = message?.reactions as MessageReaction[] | undefined;
+  return reactions ?? [];
+}
