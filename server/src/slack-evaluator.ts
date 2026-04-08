@@ -46,6 +46,9 @@ export async function evaluateLurk(
 
     const isInThread = !!threadTs;
 
+    // Name mention detection: someone said "bender" without @mention → lower reply threshold
+    const mentionsBenderByName = /\bbender\b/i.test(message) && !message.includes(`<@${botUserId}>`);
+
     // Herd mentality: count unique human reactors (exclude bot)
     const humanReactions = (existingReactions ?? []).map((r) => ({
       ...r,
@@ -127,7 +130,7 @@ ${herdActive ? `\n**Herd mentality — others are reacting, join in:**
 
 - If conversation is NOT in a thread, reply_in_thread should be false.
 - Be SELECTIVE. Most messages should be "ignore". Only react if the emoji is an obvious, natural fit — not just vaguely related.
-- confidence must be > ${herdActive ? "0.75" : "0.92"} for emoji_react, > 0.95 for reply. Set confidence below these thresholds unless you're genuinely sure.
+- confidence must be > ${herdActive ? "0.75" : "0.9"} for emoji_react, > ${mentionsBenderByName ? "0.70" : "0.9"} for reply. Set confidence below these thresholds unless you're genuinely sure.${mentionsBenderByName ? "\n- Someone mentioned Bender by name — they might be talking to or about you. Be more willing to reply." : ""}
 - When in doubt, ignore. Less is more — a well-timed reaction is worth ten random ones.`,
         }],
       }),
@@ -148,11 +151,12 @@ ${herdActive ? `\n**Herd mentality — others are reacting, join in:**
       return { action: "ignore", confidence: 0, reply_in_thread: false };
     }
     const decision = JSON.parse(jsonMatch[0]) as LurkDecision;
-    console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} herd=${herdActive} msg="${message.slice(0, 60)}"`);
+    console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} herd=${herdActive} nameMention=${mentionsBenderByName} msg="${message.slice(0, 60)}"`);
 
-    // Lower the emoji threshold when the herd is active (2+ humans already reacted)
-    const emojiThreshold = herdActive ? 0.75 : 0.92;
-    const threshold = decision.action === "emoji_react" ? emojiThreshold : 0.95;
+    // Thresholds: base 0.9 for both, herd drops emoji to 0.75, name mention drops reply to 0.70
+    const emojiThreshold = herdActive ? 0.75 : 0.9;
+    const replyThreshold = mentionsBenderByName ? 0.70 : 0.9;
+    const threshold = decision.action === "emoji_react" ? emojiThreshold : replyThreshold;
     if (decision.confidence < threshold) {
       return { action: "ignore", confidence: decision.confidence, reply_in_thread: false };
     }
