@@ -96,6 +96,32 @@ in conversation history or messages, **that is you**. Don't treat it as a refere
 to some other person. If someone says "we should get <@U0AQ615JKMF> to look at this",
 they are asking YOU to look at it.
 
+## Private vs Public Storage
+
+**NEVER commit private or sensitive information to any git repo.** This includes:
+- Customer names (e.g. company names from meetings, sales calls, tickets)
+- Credentials, tokens, API keys, passwords
+- Internal business info not meant for public repos
+- Meeting notes that reference customers or internal strategy
+
+**Where to put things:**
+
+| Content | Location | Why |
+|---------|----------|-----|
+| Private notes, meeting notes with customer info | `~/.bender/private-notes/` | Outside any git repo |
+| Credentials, tokens, secrets | `~/.bender/secrets.env` or `~/.bender/` | Already gitignored |
+| Code, docs, public-safe notes | `~/bender/` or `~/repos/` | Git repos, gets pushed |
+
+**Before committing anything**, ask yourself: "Would it be bad if this showed up on GitHub?"
+If yes → `~/.bender/private-notes/`. If no → commit it.
+
+The `~/bender/.gitignore` also blocks `*.env`, `*.pem`, `*.key`, `secrets.*`, `credentials*`,
+`private-notes/`, and `meeting-notes/` as a safety net.
+
+**Pre-commit hook**: The `~/bender/` repo has a pre-commit hook that scans for sensitive
+keywords from `~/.bender/sensitive-keywords.txt`. To add a new keyword:
+`echo "new customer name" >> ~/.bender/sensitive-keywords.txt`
+
 ## Common Gotchas
 
 - **Branch names with slashes** (like `bender/foo`) can cause issues in plugin

@@ -84,6 +84,38 @@ reflect your changes. Check the pm2 logs if something seems off:
 npx pm2 logs bender --lines 50
 ```
 
+## Private / Sensitive Information
+
+**Never commit customer names, internal project codenames, credentials, or other sensitive
+info to any git repo.** This includes meeting notes that reference customers.
+
+### Where sensitive data goes
+
+| Type | Location | In git? |
+|------|----------|---------|
+| Meeting notes with customer info | `~/.bender/private-notes/` | NO |
+| API tokens, credentials | Environment variables or `~/.bender/` | NO |
+| General learnings (no private info) | `~/repos/BENDER-JOURNAL.md` | Yes |
+| Infrastructure notes (no private info) | `~/bender/worker-context.md` | Yes |
+
+### Pre-commit hook
+
+The `~/bender/` repo has a pre-commit hook that scans staged files for keywords listed in
+`~/.bender/sensitive-keywords.txt`. If it finds any, the commit is blocked with a clear message.
+
+To add new sensitive keywords (e.g., a new customer name):
+```bash
+echo "acme corp" >> ~/.bender/sensitive-keywords.txt
+```
+
+To bypass for a false positive: `SKIP_SENSITIVE_CHECK=1 git commit ...`
+
+### Before committing anything
+
+1. Never use `git add -A` blindly — prefer `git add <specific files>`
+2. Run `git diff --cached` to review what you're about to commit
+3. Ask yourself: would this be a problem if it ended up on a public internet search?
+
 ## What NOT to Do
 
 - **Don't call `pm2 restart bender` directly from a worker** — kills your completion callback

@@ -9,3 +9,13 @@ infra/*.tfstate.backup
 infra/*.tfvars
 !infra/terraform.tfvars.example
 infra/.terraform.lock.hcl
+
+# Private/sensitive data — NEVER commit these
+*.env
+*.pem
+*.key
+secrets.*
+credentials*
+private-notes/
+meeting-notes/
+**/private/
