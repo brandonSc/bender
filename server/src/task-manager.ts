@@ -428,10 +428,8 @@ export class TaskManager {
     this.queue = this.queue.filter((item) => {
       if (item.event.source !== "github") return true;
       if (!staleTypes.has(item.event.type)) return true;
-      // Drain events that were queued before or within 5s of the worker starting.
-      // GitHub sends review + inline comments as separate webhooks at the same instant —
-      // the worker reads ALL PR comments during its run, so these are redundant.
-      if (item.received_at > workerStartedAt + 5000) return true;
+      // Only drain events that were queued BEFORE the worker started
+      if (item.received_at > workerStartedAt) return true;
       const itemTicket = item.event.ticket_id ?? this.resolveTicketForPR(item.event.pr_number, item.event.repo);
       if (itemTicket === ticketId) return false;
       if (prNumber && item.event.pr_number === prNumber) return false;
@@ -1046,6 +1044,7 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       `- Read \`.ai-implementation/\` directory if it exists (playbooks, workflow rules)`,
       `- Read \`ai-context/\` directory if it exists (conventions, schemas, SDK reference)`,
       `- Look at 2-3 existing examples similar to your task for patterns`,
+      `- **If fixing Bender's own code/behavior**: Read \`~/bender/SELF-MAINTENANCE.md\` first — it has the correct restart procedure and code map`,
       ``,
       `**Step 2: Read the full task context.**`,
       `- The Context Summary above captures the conversation so far — read it carefully`,

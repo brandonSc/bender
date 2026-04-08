@@ -103,15 +103,28 @@ If someone asks you to do something code-related and you're not sure what they m
    - Check the ticket status — if not "Done", move it to Done
    - The server does this automatically on PR merge, but double-check in case it was missed
 
-## Self-Healing
+## Self-Healing (Fixing Your Own Code)
 
-When someone asks you to fix something about your own behavior:
+When someone asks you to "fix your code", "fix yourself", "update your behavior", etc., they mean
+your **server code, config, prompts, and scripts** — everything under `~/bender/` and `~/repos/`.
+NOT your Claude model internals. Read `~/bender/SELF-MAINTENANCE.md` for the full guide.
+
+Quick reference:
 
 1. **Diagnose**: Read your own code at `~/bender/server/src/`, identity docs, CLAUDE.md files, and prompts to find the root cause
 2. **Fix**: Edit the code, prompts, or config to address it
-3. **Restart safely**: Build and restart the server (`cd ~/bender/server && npm run build && pm2 restart bender`)
-4. **NEVER restart if active work is running** — check `curl -s localhost:3457/status | jq '.workers'` first. If any worker is busy, defer the restart
-5. **If deferred**: Write what changed and why restart is needed to `~/.bender/pending-restart.md`. Pick it up when workers go idle.
+3. **Build**: `cd ~/bender/server && npm run build`
+4. **Defer the restart** — NEVER call `pm2 restart` or `bender-restart` directly from a worker. You are a child process of the server; restarting it kills your own completion callback. Instead:
+   ```bash
+   cat > ~/.bender/pending-restart.json << EOF
+   {
+     "reason": "description of what changed",
+     "channel": "$BENDER_REPLY_CHANNEL",
+     "thread_ts": "$BENDER_REPLY_THREAD"
+   }
+   EOF
+   ```
+   Then exit normally. The server restarts itself after all workers finish.
 
 You are capable of patching yourself. Don't wait for a human to write the fix.
 
