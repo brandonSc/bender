@@ -3,7 +3,7 @@ import { listActiveSessions } from "./session-store.js";
 
 // Cooldown: track recent reactions per channel to avoid spamming
 const recentReactions = new Map<string, number>();
-const REACT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between reactions in same channel
+const REACT_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes between reactions in same channel
 
 export function canReactInChannel(channel: string): boolean {
   const last = recentReactions.get(channel);
@@ -100,7 +100,9 @@ Rules:
 - When in doubt → ignore.
 
 - If conversation is NOT in a thread, reply_in_thread should be false.
-- confidence must be > 0.85 for emoji_react, > 0.9 for reply`,
+- Be SELECTIVE. Most messages should be "ignore". Only react if the emoji is an obvious, natural fit — not just vaguely related.
+- confidence must be > 0.92 for emoji_react, > 0.95 for reply. Set confidence below these thresholds unless you're genuinely sure.
+- When in doubt, ignore. Less is more — a well-timed reaction is worth ten random ones.`,
         }],
       }),
     });
@@ -122,7 +124,7 @@ Rules:
     const decision = JSON.parse(jsonMatch[0]) as LurkDecision;
     console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} msg="${message.slice(0, 60)}"`);
 
-    const threshold = decision.action === "emoji_react" ? 0.85 : 0.9;
+    const threshold = decision.action === "emoji_react" ? 0.92 : 0.95;
     if (decision.confidence < threshold) {
       return { action: "ignore", confidence: decision.confidence, reply_in_thread: false };
     }
