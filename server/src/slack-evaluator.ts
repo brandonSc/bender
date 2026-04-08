@@ -160,6 +160,7 @@ ${herdActive ? `\n**Herd mentality — others are reacting, join in:**
     const replyThreshold = mentionsBenderByName ? 0.70 : 0.9;
     const threshold = decision.action === "emoji_react" ? emojiThreshold : replyThreshold;
     if (decision.confidence < threshold) {
+      console.log(`[slack-evaluator] Suppressed ${decision.action}: confidence=${decision.confidence} < threshold=${threshold}${decision.emoji ? ` emoji=:${decision.emoji}:` : ""}${decision.suggested_reply ? ` reply="${decision.suggested_reply.slice(0, 60)}"` : ""} msg="${message.slice(0, 60)}"`);
       return { action: "ignore", confidence: decision.confidence, reply_in_thread: false };
     }
 
