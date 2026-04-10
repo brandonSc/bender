@@ -54,7 +54,7 @@ export function buildNewSessionPrompt(
     "- Read the playbook from `.ai-implementation/` — it defines the workflow (spec-first or direct implementation).",
     "- Create the files, commit, push, and open a draft PR.",
     `- **PR title format:** \`[${session.ticket_id}] Short description\` — always include the ticket ID. For spec-first PRs: \`[${session.ticket_id}][Spec Only] Short description\`.`,
-    "- If you want to propose a plan or ask a question before executing, use `bender-await-reply` — it posts to the user and pauses until they reply.",
+    "- **This is a ticket assignment — just do the work.** The ticket description tells you what to build. The repo playbook tells you the workflow (spec-first vs direct). Follow them and deliver a PR. Do NOT propose a plan or ask for permission — the ticket IS the plan. Only use `bender-await-reply` if you hit a genuine blocker or ambiguity that you can't resolve from the docs.",
     "",
     "## After Opening a PR",
     "Run `bender-track-pr <owner/repo> <pr_number>` to register the PR.",
