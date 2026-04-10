@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Config, TaskEvent, Worker, Session } from "./types.js";
 import { routeEvent, type RouteResult } from "./router.js";
-import { saveSession, findSessionForEvent, listActiveSessions, createSession, getSessionByTicket } from "./session-store.js";
+import { saveSession, findSessionForEvent, listActiveSessions, createSession, getSessionByTicket, findSessionByLinkedThread } from "./session-store.js";
 import { invokeClaude, spawnClaude } from "./claude-executor.js";
 import {
   saveWorker,
@@ -619,7 +619,11 @@ export class TaskManager {
       const pending = getPendingPlan(event.slack_channel!, threadTs);
       if (pending && isApproval(event.comment_body)) {
         console.log(`[W${worker.id}] Plan approved — dispatching work`);
-        const ack = await benderSpeak(`The human approved a plan. Write a short excited 1-sentence acknowledgment.`);
+        let ack: string;
+        try {
+          ack = await benderSpeak(`The human approved a plan. Write a short excited 1-sentence acknowledgment.`);
+        } catch { ack = ""; }
+        if (!ack) ack = "On it.";
         await slackPostMessage(event.slack_channel!, ack, threadTs);
         event.slack_thread_ts = threadTs;
         const workEvent = consumePlan(event.slack_channel!, threadTs);
@@ -657,8 +661,11 @@ export class TaskManager {
     const sessions = listActiveSessions();
     const sessionSummary = sessions
       .map((s) => {
-        const threadMatch = (event.slack_thread_ts && s.slack_thread_ts === event.slack_thread_ts) ? " ← THIS THREAD" : "";
-        return `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"}, repo: ${s.repo || "unknown"})${threadMatch}`;
+        const isThisThread = event.slack_thread_ts && s.slack_thread_ts === event.slack_thread_ts;
+        const isLinked = !isThisThread && event.slack_thread_ts && event.slack_channel
+          && s.linked_threads?.some((lt) => lt.channel === event.slack_channel && lt.thread_ts === event.slack_thread_ts);
+        const marker = isThisThread ? " ← THIS THREAD" : isLinked ? " ← LINKED (has context)" : "";
+        return `${s.ticket_id}: ${s.ticket_title} (${s.phase}, PR #${s.pr_number ?? "none"}, repo: ${s.repo || "unknown"})${marker}`;
       })
       .join("\n") || "No active work.";
 
@@ -742,7 +749,7 @@ ${conversationContext ? `## Conversation Context\n${conversationContext}\n` : ""
 ${userHistory ? `## Previous interactions with this user (across channels):\n${userHistory}\n` : ""}
 Read the conversation context carefully before responding. Reference previous messages when relevant.
 
-You have seven action modes:
+You have nine action modes:
 1. **chat** — answering questions, status updates, banter. Just reply.
 2. **plan** — non-trivial work requested. Propose numbered steps, ask for approval.
 3. **work** — user approved a plan, or task is dead simple. Dispatch a background worker.
@@ -750,9 +757,11 @@ You have seven action modes:
 5. **cancel** — user wants to stop a running worker. Kill it.
 6. **redirect** — user wants to stop current work AND start something else. Kill worker, dispatch new work.
 7. **dismiss** — user is telling you to leave the thread / they'll handle it from here. Reply is ignored; you'll react with :+1: and stop tracking the thread.
+8. **pass** — message isn't directed at you, or you have nothing to add. Stay completely silent. No reply, no reaction.
+9. **react_only** — acknowledge with just a reaction emoji instead of a full reply. Less noise, same signal.
 
 Reply in JSON:
-{"action": "chat"|"plan"|"work"|"status"|"cancel"|"redirect"|"dismiss", "reply": "your natural reply", "plan": "numbered steps (plan only)", "context_summary": "detailed context for the worker (plan/work/redirect only)"}
+{"action": "chat"|"plan"|"work"|"status"|"cancel"|"redirect"|"dismiss"|"pass"|"react_only", "reply": "your natural reply (omit for pass)", "emoji": "emoji_name (react_only only)", "plan": "numbered steps (plan only)", "context_summary": "detailed context for the worker (plan/work/redirect only)"}
 
 **context_summary** (for plan/work/redirect): Capture ALL relevant decisions, requirements, and constraints from the conversation. Include specific details: file paths, naming decisions, schema choices, user corrections. The worker only sees this summary + thread history, not this chat.
 
@@ -769,6 +778,12 @@ Guidelines:
 - "Stop" / "cancel" / "never mind" when a worker is running → cancel
 - "Actually do X instead" / "forget that, do Y" when a worker is running → redirect
 - "We'll take it from here" / "thanks bender" / "you're dismissed" / "we got it" → dismiss
+- Someone @mentions a specific other person ("@corey can you review this?") → pass (they're not talking to you)
+- Two people going back and forth with each other → pass (unless you have genuinely relevant info to add)
+- General conversation where you have nothing useful to contribute → pass
+- Someone shares good news, ships something, or posts something you agree with → react_only (:shipit:, :lgtm:, :+1:, etc.)
+- A quick acknowledgment is all that's needed → react_only
+- When in doubt between chat and pass → pass. Less is more — a quiet Bender is better than a noisy one.
 - When in doubt between plan and work → plan. Better to confirm than go down a rabbit hole.
 
 **CRITICAL — never promise action as chat:**
@@ -777,11 +792,13 @@ Guidelines:
 - If the user asks you to DO something (investigate, check, fix, create, update, post, message someone) and you intend to act on it, the action MUST be work or plan. Never chat with "I'll handle it" — that's a lie if you don't dispatch a worker.
 - If you're not sure whether to act, use plan and ask for confirmation.
 
-**Thread awareness — use your judgment on when to respond:**
+**Thread awareness — use pass/react_only to stay quiet when appropriate:**
 - You're part of the conversation in tracked threads — you don't need @mentions to respond.
-- But read the room: if someone @mentions a specific other person ("@corey what do you think?"), they're asking that person, not you.
-- If two people are going back and forth with each other, don't insert yourself unless you have something genuinely relevant.
-- When in doubt about whether a message is for you, consider: does it follow up on something you said? Is it a question you can answer? Would a real teammate jump in here?
+- But read the room: if someone @mentions a specific other person ("@corey what do you think?"), use **pass**.
+- If two people are going back and forth with each other, use **pass** unless you have something genuinely relevant.
+- If the message is clearly not directed at you and you have nothing to add → **pass**.
+- If a quick emoji says it all (agreement, acknowledgment, approval) → **react_only**.
+- Only use **chat** when you're genuinely part of the conversation or have useful info to contribute.
 
 Thread context: Each thread is tied to a specific task. If the user mentions a different PR or repo, point it out.
 **Use exact names:** When the user says a channel name, repo name, PR number, or any identifier — use EXACTLY what they said in your reply. Do not paraphrase "#team-eng" as "#engineering" or "PR #97" as "the gitleaks PR". Repeat their exact words.
@@ -794,7 +811,41 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       });
 
       if (!resp.ok) {
-        console.error(`[W${worker.id}] Slack Sonnet error: ${resp.status}`);
+        const retryable = resp.status === 529 || resp.status === 503 || resp.status === 500;
+        console.error(`[W${worker.id}] Slack Sonnet error: ${resp.status}${retryable ? " (will retry)" : ""}`);
+        if (retryable) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const retry = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 1500,
+              system: "You are Bender from Futurama, a coding agent. Be concise. Reply in JSON: {\"action\": \"chat\", \"reply\": \"your reply\"}",
+              messages: [{ role: "user", content: event.comment_body ?? "hey" }],
+            }),
+          });
+          if (!retry.ok) {
+            console.error(`[W${worker.id}] Slack Sonnet retry also failed: ${retry.status}`);
+            await slackPostMessage(event.slack_channel!, "Brain's overloaded, try again in a sec.", event.slack_thread_ts);
+            return;
+          }
+          const retryData = (await retry.json()) as { content: Array<{ text: string }> };
+          const retryReply = retryData.content[0].text;
+          let retryClean = retryReply;
+          try {
+            const m = retryReply.match(/\{[\s\S]*\}/);
+            if (m) retryClean = (JSON.parse(m[0]) as { reply: string }).reply ?? retryReply;
+          } catch { /* use raw */ }
+          await slackPostMessage(event.slack_channel!, retryClean, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", retryClean, `reply:${event.id}`);
+          console.log(`[W${worker.id}] ← chat (retry after ${resp.status})`);
+          return;
+        }
         return;
       }
 
@@ -805,14 +856,16 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       let cleanReply = rawReply;
       let planText = "";
       let contextSummary = "";
+      let reactEmoji = "";
       try {
         const jsonMatch = rawReply.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]) as { action: string; reply: string; plan?: string; context_summary?: string };
+          const parsed = JSON.parse(jsonMatch[0]) as { action: string; reply: string; plan?: string; context_summary?: string; emoji?: string };
           action = parsed.action;
           cleanReply = parsed.reply;
           planText = parsed.plan ?? "";
           contextSummary = parsed.context_summary ?? "";
+          reactEmoji = parsed.emoji ?? "";
         }
       } catch {
         action = "chat";
@@ -866,10 +919,32 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
         }
 
         case "status": {
-          // Sonnet already has the worker state in its prompt and wrote a status reply
-          await slackPostMessage(event.slack_channel!, cleanReply, event.slack_thread_ts);
-          recordMessage(event.slack_channel!, "bender", cleanReply, `reply:${event.id}`);
-          console.log(`[W${worker.id}] ← status report`);
+          // Build factual status from real system state — never trust Sonnet to report this accurately
+          let factualStatus = "";
+          if (threadWorker) {
+            const elapsed = Math.round((Date.now() - new Date(threadWorker.startedAt).getTime()) / 1000);
+            const lastTools = getWorkerLogTail(threadWorker, 5);
+            factualStatus = `Worker running in this thread (${Math.floor(elapsed / 60)}m${elapsed % 60}s): "${threadWorker.description}"\nRecent activity:\n${lastTools}`;
+          } else if (runningWorkers.length > 0) {
+            factualStatus = `${runningWorkers.length} worker(s) running:\n` + runningWorkers.map((w: { description: string; startedAt: string }) => {
+              const elapsed = Math.round((Date.now() - new Date(w.startedAt).getTime()) / 1000);
+              return `  - "${w.description}" (${Math.floor(elapsed / 60)}m${elapsed % 60}s)`;
+            }).join("\n");
+          } else {
+            const completedW = event.slack_thread_ts && event.slack_channel
+              ? getWorker(event.slack_channel, event.slack_thread_ts)
+              : null;
+            if (completedW && completedW.status !== "running") {
+              const elapsed = completedW.durationMs ? Math.round(completedW.durationMs / 1000) : 0;
+              const lastTools = getWorkerLogTail(completedW, 5);
+              factualStatus = `Last worker finished (${completedW.status}, ran ${elapsed}s, exit ${completedW.exitCode ?? "?"}):\n  "${completedW.description}"\n${lastTools}`;
+            } else {
+              factualStatus = "No workers running. No recent completions in this thread.";
+            }
+          }
+          await slackPostMessage(event.slack_channel!, factualStatus, event.slack_thread_ts);
+          recordMessage(event.slack_channel!, "bender", factualStatus, `reply:${event.id}`);
+          console.log(`[W${worker.id}] \u2190 status report (factual)`);
           break;
         }
 
@@ -896,6 +971,24 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
           event.slack_thread_ts = redirectThreadTs;
           await this.handleSlackWork(worker, event);
           console.log(`[W${worker.id}] ← redirected to new work`);
+          break;
+        }
+
+        case "pass": {
+          // Stay silent — message wasn't for us or we have nothing to add
+          console.log(`[W${worker.id}] ← pass (staying quiet)`);
+          break;
+        }
+
+        case "react_only": {
+          // Acknowledge with just a reaction emoji instead of a full reply
+          const rawEvtReact = (event.raw as Record<string, unknown>)?.event as Record<string, unknown> | undefined;
+          const reactMsgTs = rawEvtReact?.ts as string;
+          const emoji = reactEmoji || "+1";
+          if (event.slack_channel && reactMsgTs) {
+            await slackAddReaction(event.slack_channel, reactMsgTs, emoji);
+          }
+          console.log(`[W${worker.id}] ← react_only :${emoji}:`);
           break;
         }
 
@@ -942,10 +1035,20 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
     const sessions = listActiveSessions();
     // If work is in an existing thread tied to a session, use that session
     let activeSession: Session | null = null;
+    let isLinkedThread = false;
     if (event.slack_channel && event.slack_thread_ts) {
       activeSession = sessions.find(
         (s) => s.slack_channel === event.slack_channel && s.slack_thread_ts === event.slack_thread_ts,
       ) ?? null;
+
+      // Check linked threads — cross-thread session routing
+      if (!activeSession) {
+        activeSession = findSessionByLinkedThread(event.slack_channel, event.slack_thread_ts);
+        if (activeSession) {
+          isLinkedThread = true;
+          console.log(`[handleSlackWork] Found session via linked thread: ${activeSession.ticket_id}`);
+        }
+      }
     }
     // Otherwise don't assume — the work will create its own session if it opens a PR
 
@@ -1097,12 +1200,10 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       `  git push`,
       `Available orgs: earthly, pantalasa, pantalasa-cronos, brandonSc`,
       ``,
-      `## Slack Files`,
-      `**Download:** If the message references Slack files (url_private_download):`,
+      `## File Downloads`,
+      `If the message references Slack files (url_private_download), download them with:`,
       `  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "FILE_URL" -o /tmp/filename`,
-      ``,
-      `**Upload:** To share a file (screenshot, log, etc.) in a Slack thread:`,
-      `  curl -s -F "file=@/path/to/file" -F "channels=$BENDER_REPLY_CHANNEL" -F "thread_ts=$BENDER_REPLY_THREAD" -F "initial_comment=your message" -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/files.upload`,
+      `Read the downloaded file and use its contents as context for your work.`,
     ].join("\n");
 
     // Persist session so it survives restarts and supports resume
@@ -1138,16 +1239,17 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       additional_prs: [],
       slack_channel: event.slack_channel ?? null,
       slack_thread_ts: event.slack_thread_ts ?? null,
+      linked_threads: [],
     };
 
-    // Resume if follow-up in the same thread, fresh otherwise
-    const isSameThread = workSession.claude_session_id
+    // Resume if follow-up in the same thread or a linked thread, fresh otherwise
+    const isSameOrLinkedThread = workSession.claude_session_id
       && event.slack_thread_ts
-      && workSession.slack_thread_ts === event.slack_thread_ts;
-    if (!isSameThread) {
+      && (workSession.slack_thread_ts === event.slack_thread_ts || isLinkedThread);
+    if (!isSameOrLinkedThread) {
       workSession.claude_session_id = null;
     } else {
-      console.log(`[handleSlackWork] Resuming session ${workSession.claude_session_id!.slice(0, 8)}… in thread ${event.slack_thread_ts}`);
+      console.log(`[handleSlackWork] Resuming session ${workSession.claude_session_id!.slice(0, 8)}… in ${isLinkedThread ? "linked" : "same"} thread ${event.slack_thread_ts}`);
     }
 
     // Save to disk (creates if new, updates if existing)

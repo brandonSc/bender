@@ -17,7 +17,7 @@ import {
   parseSlackEvent,
 } from "./webhooks/slack.js";
 import { TaskManager } from "./task-manager.js";
-import { listActiveSessions, gcStaleSessions } from "./session-store.js";
+import { listActiveSessions, gcStaleSessions, addLinkedThread } from "./session-store.js";
 import {
   getLinearToken,
   getAuthorizationUrl,
@@ -183,6 +183,39 @@ app.post("/internal/track-thread", (req, res) => {
   res.json({ status: "ok", tracked: key });
 });
 
+// --- Internal: link a Slack thread to an existing session (localhost only) ---
+
+app.post("/internal/link-thread", (req, res) => {
+  const ip = req.ip ?? req.socket.remoteAddress ?? "";
+  if (!ip.includes("127.0.0.1") && !ip.includes("::1") && !ip.includes("::ffff:127.0.0.1")) {
+    res.status(403).json({ error: "localhost only" });
+    return;
+  }
+
+  const { ticket_id, channel, thread_ts } = req.body as {
+    ticket_id?: string;
+    channel?: string;
+    thread_ts?: string;
+  };
+
+  if (!ticket_id || !channel || !thread_ts) {
+    res.status(400).json({ error: "Missing ticket_id, channel, or thread_ts" });
+    return;
+  }
+
+  const ok = addLinkedThread(ticket_id, channel, thread_ts);
+  if (!ok) {
+    res.status(404).json({ error: `Session not found: ${ticket_id}` });
+    return;
+  }
+
+  // Also track the thread so Bender responds to messages in it
+  trackThread(`${channel}:${thread_ts}`);
+
+  console.log(`[internal] Linked thread ${channel}:${thread_ts} → session ${ticket_id}`);
+  res.json({ status: "ok", linked: { ticket_id, channel, thread_ts } });
+});
+
 // --- Linear OAuth ---
 
 app.get("/auth/linear", (_req, res) => {
@@ -335,6 +368,8 @@ app.post("/webhooks/linear", (req, res) => {
 
 let slackBotUserId = "";
 const recentSlackEvents = new Set<string>();
+// Track recent lurk reply threads — don't auto-track these into full engagement
+const recentLurkThreads = new Set<string>();
 
 app.post("/webhooks/slack", async (req, res) => {
   const rawBody = (req as unknown as Record<string, unknown>).rawBody as string;
@@ -373,8 +408,13 @@ app.post("/webhooks/slack", async (req, res) => {
     const botChannel = rawSlackEvt.channel as string;
     const botThreadTs = (rawSlackEvt.thread_ts as string) ?? (rawSlackEvt.ts as string);
     if (botChannel && botThreadTs) {
-      trackThread(`${botChannel}:${botThreadTs}`);
-      console.log(`[slack] Auto-tracked bot thread: ${botChannel}:${botThreadTs}`);
+      const threadKey = `${botChannel}:${botThreadTs}`;
+      if (recentLurkThreads.has(threadKey)) {
+        console.log(`[slack] Skipped auto-track for lurk reply: ${threadKey}`);
+      } else {
+        trackThread(threadKey);
+        console.log(`[slack] Auto-tracked bot thread: ${threadKey}`);
+      }
     }
   }
 
@@ -444,6 +484,10 @@ app.post("/webhooks/slack", async (req, res) => {
         }
       } else if (decision.action === "reply" && decision.suggested_reply) {
         console.log(`[slack] Lurk → reply (confidence=${decision.confidence})`);
+        // Mark as lurk so auto-track doesn't escalate this into a fully tracked thread
+        const lurkThreadKey = `${event.slack_channel}:${event.slack_thread_ts ?? (slackEvent.ts as string)}`;
+        recentLurkThreads.add(lurkThreadKey);
+        setTimeout(() => recentLurkThreads.delete(lurkThreadKey), 10000);
         await postMessage(
           event.slack_channel!,
           decision.suggested_reply,

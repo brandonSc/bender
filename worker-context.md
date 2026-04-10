@@ -122,6 +122,80 @@ The `~/bender/.gitignore` also blocks `*.env`, `*.pem`, `*.key`, `secrets.*`, `c
 keywords from `~/.bender/sensitive-keywords.txt`. To add a new keyword:
 `echo "new customer name" >> ~/.bender/sensitive-keywords.txt`
 
+## Docker Image Prerequisites (BEFORE Cronos Testing)
+
+**If your plugin has its own Earthfile (custom image), the image MUST exist on Docker
+Hub BEFORE you can test on cronos.** This is the #1 thing that trips up new plugin work.
+
+**How to check:** Plugins with an `Earthfile` in their directory (e.g.
+`collectors/ruby/Earthfile`) build a custom Docker image like `earthly/lunar-lib:ruby-<VERSION>`.
+If no Earthfile exists, the plugin runs on the base image and you can skip this section.
+
+**How images get built and pushed:**
+- lunar-lib CI runs `earthly --ci --push +all --VERSION <branch>` on every push
+- Branch `bender/eng-487-ruby` produces image tag `ruby-bender-eng-487-ruby` (slashes → dashes)
+- Images are pushed to Docker Hub automatically when CI passes
+- On merge to main, images are also tagged with the git SHA
+
+**Before starting cronos testing, verify your image exists:**
+```bash
+# Check if the image tag exists on Docker Hub
+docker manifest inspect earthly/lunar-lib:<plugin>-<normalized-branch> 2>&1 | head -5
+# Example: docker manifest inspect earthly/lunar-lib:ruby-bender-eng-487-ruby
+```
+
+**If the image doesn't exist:**
+1. Make sure your plugin's Earthfile is wired into the root `Earthfile`'s `+all` target
+   (check for `BUILD --pass-args ./collectors/<name>+image`)
+2. Push a commit to your branch on `earthly/lunar-lib` to trigger CI
+3. Wait for CI to pass — this builds AND pushes all images
+4. Verify with `docker manifest inspect` before proceeding to cronos config
+
+**You CANNOT build and push images locally** — the worker environment doesn't have
+Docker Hub credentials. The only way to get images on Docker Hub is through CI.
+
+**Common mistake:** Configuring cronos to use your plugin, waiting for the cronos sync
+build to pass, then wondering why the collector never runs. The sync build passes fine
+(it just updates the manifest), but the cronos runner can't pull a Docker image that
+doesn't exist yet. The collector silently fails or never executes.
+
+---
+
+## Integration Testing Workflow (lunar-lib PRs)
+
+**Every collector/policy PR must be integration tested on cronos.** The full process
+is in `lunar-lib/.ai-implementation/LUNAR-PLUGIN-PLAYBOOK-AI.md` section "6. CI collectors
+must be tested on cronos". Here's the critical ordering that trips people up:
+
+0. **Ensure Docker image exists on Docker Hub** (see section above) — skip if plugin uses base image
+1. Push lunar config changes to `pantalasa-cronos/lunar` → **WAIT FOR BUILD TO PASS**
+2. Only AFTER build is green → push test files to component repo (e.g. `pantalasa-cronos/frontend`)
+3. Wait for component repo CI workflows to finish
+4. **Wait 1 more minute** after workflows complete — the UI needs time to settle pending states
+5. THEN check the UI, take screenshots, verify data
+
+**Test results must include:**
+- Component JSON output (a pasted snipped of the actual JSON obtained with `lunar` CLI, not just "it works")
+- Screenshot of checks table **scrolled to show YOUR plugin's checks** (not empty/generic table)
+- Screenshot of component JSON page with your data expanded
+
+**Auto-trigger:** When the second reviewer approves a spec PR, start implementation AND
+integration testing automatically. Don't wait for a separate "go implement" message.
+
+**QA/Bug Reporting (MANDATORY):** When testing on cronos, report ANY issues you encounter
+in-thread with full session context. This includes:
+- Performance problems (slow builds, UI lag, timeouts)
+- Unexpected errors or failures (even if you work around them)
+- UI bugs or display issues in the cronos dashboard
+- Data inconsistencies between CLI output and UI
+- Flaky behavior (works sometimes, fails other times)
+
+Report format: describe the issue, include relevant logs/screenshots, note the component
+and config versions you tested against. The team may ask you to escalate specific issues
+to #team-eng for broader awareness — be ready to post a clean summary there when asked.
+
+There are more details in lunar-lib/.ai-implementation/LUNAR-PLUGIN-PLAYBOOK-AI.md please fully read that document as well.
+
 ## Common Gotchas
 
 - **Branch names with slashes** (like `bender/foo`) can cause issues in plugin

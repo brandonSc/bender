@@ -80,12 +80,37 @@ export function getSessionByPR(
 
 /**
  * Update (save) a session.
+ * Uses read-merge-write to preserve fields added by concurrent processes
+ * (e.g., linked_threads added while a worker was running).
  */
 export function saveSession(session: Session): void {
   ensureDirs();
   const filePath = resolve(sessionsDir(), `${session.ticket_id}.json`);
-  writeFileSync(filePath, JSON.stringify(session, null, 2));
-  updateIndexes(session);
+
+  let merged: Session = session;
+  if (existsSync(filePath)) {
+    try {
+      const onDisk = JSON.parse(readFileSync(filePath, "utf-8")) as Session;
+      // Overlay incoming session fields on top of on-disk data
+      merged = { ...onDisk, ...session };
+      // Union array fields that accumulate — don't lose concurrent additions
+      merged.linked_threads = unionByKey(
+        onDisk.linked_threads ?? [],
+        session.linked_threads ?? [],
+        (lt) => `${lt.channel}:${lt.thread_ts}`,
+      );
+      merged.additional_prs = unionByKey(
+        onDisk.additional_prs ?? [],
+        session.additional_prs ?? [],
+        (ap) => `${ap.repo}:${ap.pr_number}`,
+      );
+    } catch {
+      // If read/parse fails, save what we have
+    }
+  }
+
+  writeFileSync(filePath, JSON.stringify(merged, null, 2));
+  updateIndexes(merged);
 }
 
 /**
@@ -95,10 +120,18 @@ export function archiveSession(ticketId: string): void {
   const src = resolve(sessionsDir(), `${ticketId}.json`);
   if (!existsSync(src)) return;
 
+  // Read session before moving so we can clean up PR index symlinks
+  try {
+    const session = JSON.parse(readFileSync(src, "utf-8")) as Session;
+    cleanupPrIndexes(session);
+  } catch {
+    // Best-effort cleanup
+  }
+
   const dst = resolve(archiveDir(), `${ticketId}.json`);
   renameSync(src, dst);
 
-  // Clean up indexes
+  // Clean up ticket index
   const ticketLink = resolve(indexByTicketDir(), ticketId);
   if (existsSync(ticketLink)) unlinkSync(ticketLink);
 }
@@ -204,6 +237,79 @@ export function gcStaleSessions(): number {
   }
 
   return archived;
+}
+
+/**
+ * Find a session that has a given thread as a linked thread.
+ */
+export function findSessionByLinkedThread(
+  channel: string,
+  threadTs: string,
+): Session | null {
+  const sessions = listActiveSessions();
+  return (
+    sessions.find((s) =>
+      s.linked_threads?.some(
+        (lt) => lt.channel === channel && lt.thread_ts === threadTs,
+      ),
+    ) ?? null
+  );
+}
+
+/**
+ * Link a Slack thread to an existing session.
+ * Replies in the linked thread will resume this session's Claude context.
+ */
+export function addLinkedThread(
+  ticketId: string,
+  channel: string,
+  threadTs: string,
+): boolean {
+  const session = getSessionByTicket(ticketId);
+  if (!session) return false;
+  if (!session.linked_threads) session.linked_threads = [];
+  const exists = session.linked_threads.some(
+    (lt) => lt.channel === channel && lt.thread_ts === threadTs,
+  );
+  if (!exists) {
+    session.linked_threads.push({ channel, thread_ts: threadTs });
+    saveSession(session);
+  }
+  return true;
+}
+
+/**
+ * Deduplicated union of two arrays, keyed by a string derived from each element.
+ */
+function unionByKey<T>(a: T[], b: T[], keyFn: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of [...a, ...b]) {
+    const key = keyFn(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+/**
+ * Remove PR index symlinks for a session (called before archiving).
+ */
+function cleanupPrIndexes(session: Session): void {
+  if (session.pr_number && session.repo) {
+    const prLink = resolve(indexByPrDir(), session.repo, session.pr_number.toString());
+    try { if (existsSync(prLink)) unlinkSync(prLink); } catch { /* best effort */ }
+  }
+  if (session.additional_prs) {
+    for (const ap of session.additional_prs) {
+      if (ap.repo && ap.pr_number) {
+        const prLink = resolve(indexByPrDir(), ap.repo, ap.pr_number.toString());
+        try { if (existsSync(prLink)) unlinkSync(prLink); } catch { /* best effort */ }
+      }
+    }
+  }
 }
 
 function updateIndexes(session: Session): void {

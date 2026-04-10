@@ -245,6 +245,7 @@ function newSession(event: TaskEvent): Session {
     additional_prs: [],
     slack_channel: null,
     slack_thread_ts: null,
+    linked_threads: [],
   };
 }
 

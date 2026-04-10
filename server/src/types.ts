@@ -68,6 +68,9 @@ export interface Session {
   // Slack "agent tab" — the thread where Bender communicates for this session
   slack_channel: string | null;
   slack_thread_ts: string | null;
+
+  // Cross-thread routing: replies in linked threads resume this session's Claude context
+  linked_threads: Array<{ channel: string; thread_ts: string }>;
 }
 
 // --- Events ---
