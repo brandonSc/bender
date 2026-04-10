@@ -1097,10 +1097,12 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       `  git push`,
       `Available orgs: earthly, pantalasa, pantalasa-cronos, brandonSc`,
       ``,
-      `## File Downloads`,
-      `If the message references Slack files (url_private_download), download them with:`,
+      `## Slack Files`,
+      `**Download:** If the message references Slack files (url_private_download):`,
       `  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "FILE_URL" -o /tmp/filename`,
-      `Read the downloaded file and use its contents as context for your work.`,
+      ``,
+      `**Upload:** To share a file (screenshot, log, etc.) in a Slack thread:`,
+      `  curl -s -F "file=@/path/to/file" -F "channels=$BENDER_REPLY_CHANNEL" -F "thread_ts=$BENDER_REPLY_THREAD" -F "initial_comment=your message" -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/files.upload`,
     ].join("\n");
 
     // Persist session so it survives restarts and supports resume
