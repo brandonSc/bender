@@ -13,6 +13,7 @@ export interface ClaudeResult {
   stderr: string;
   durationMs: number;
   killed: boolean;
+  logFile: string;
 }
 
 /**
@@ -119,6 +120,7 @@ export async function invokeClaude(
         stderr: err.message,
         durationMs,
         killed: false,
+        logFile,
       });
     });
 
@@ -215,6 +217,7 @@ export async function invokeClaude(
         stderr,
         durationMs,
         killed,
+        logFile,
       });
     });
   });
@@ -361,6 +364,7 @@ export function spawnClaude(
       stderr,
       durationMs,
       killed,
+      logFile,
     });
   });
 
@@ -374,6 +378,7 @@ export function spawnClaude(
       stderr: err.message,
       durationMs: Date.now() - startTime,
       killed: false,
+      logFile,
     });
   });
 

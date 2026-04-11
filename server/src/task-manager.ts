@@ -517,8 +517,14 @@ export class TaskManager {
       console.warn(`[W${worker.id}] No session ID captured from Claude output`);
     }
 
-    // Extract PRs from Claude's output and update session
-    const prMatches = (claudeResult.stdout + claudeResult.stderr)
+    // Extract PRs from full log (stdout only has last assistant text, misses tool results)
+    let logSearchContent = claudeResult.stdout + claudeResult.stderr;
+    try {
+      if (claudeResult.logFile && existsSync(claudeResult.logFile)) {
+        logSearchContent = readFileSync(claudeResult.logFile, "utf-8");
+      }
+    } catch {}
+    const prMatches = logSearchContent
       .matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
     for (const match of prMatches) {
       const repo = match[1];
@@ -1200,6 +1206,12 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       `  git push`,
       `Available orgs: earthly, pantalasa, pantalasa-cronos, brandonSc`,
       ``,
+      `## PR Tracking`,
+      `After creating or opening a PR with \`gh pr create\`, ALWAYS run:`,
+      `  bender-track-pr <repo> <pr_number>`,
+      `Example: bender-track-pr earthly/lunar-lib 120`,
+      `This registers the PR on your session so GitHub webhooks (reviews, CI) are routed correctly.`,
+      ``,
       `## File Downloads`,
       `If the message references Slack files (url_private_download), download them with:`,
       `  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "FILE_URL" -o /tmp/filename`,
@@ -1280,8 +1292,27 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
       workSession.last_activity_at = new Date().toISOString();
       saveSession(workSession);
 
-      // Extract PRs from output
-      const prMatches = (result.stdout + result.stderr)
+      // Read the full log file once — used for PR extraction and Slack detection.
+      // result.stdout only has the last assistant text block, so PR URLs from
+      // tool results (e.g. `gh pr create` output) would be missed.
+      let logContent = "";
+      try {
+        logContent = existsSync(result.logFile) ? readFileSync(result.logFile, "utf-8") : "";
+      } catch {}
+
+      // Re-read session from disk before extracting PRs — bender-track-pr may
+      // have updated pr_number/repo during the run.
+      try {
+        const onDisk = JSON.parse(readFileSync(resolve(getBenderDir(), "sessions", `${workSession.ticket_id}.json`), "utf-8")) as typeof workSession;
+        if (onDisk.pr_number && !workSession.pr_number) {
+          workSession.pr_number = onDisk.pr_number;
+          workSession.repo = onDisk.repo;
+          console.log(`[worker] Picked up PR from disk (bender-track-pr): ${onDisk.repo}#${onDisk.pr_number}`);
+        }
+      } catch {}
+
+      // Extract PRs from full log content (catches tool_result URLs, not just assistant text)
+      const prMatches = (logContent || result.stdout + result.stderr)
         .matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
       for (const match of prMatches) {
         const repo = match[1];
@@ -1332,13 +1363,9 @@ ${threadWorker ? "A worker IS running in this thread right now. If the user seem
         saveWorker(workerState);
       }
 
-      // Check if Claude posted to Slack during its run by scanning the log file
-      let claudePosted = false;
-      try {
-        const logContent = existsSync(spawned.logFile) ? readFileSync(spawned.logFile, "utf-8") : "";
-        claudePosted = logContent.includes("chat.postMessage")
-          || logContent.includes("bender-await-reply");
-      } catch {}
+      // Check if Claude posted to Slack during its run
+      const claudePosted = logContent.includes("chat.postMessage")
+        || logContent.includes("bender-await-reply");
 
 
       if (result.killed) {
