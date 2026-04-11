@@ -87,6 +87,16 @@ export function saveSession(session: Session): void {
   ensureDirs();
   const filePath = resolve(sessionsDir(), `${session.ticket_id}.json`);
 
+  // If the session was already archived and no longer exists in active sessions,
+  // don't recreate it — that creates a zombie session in both directories.
+  if (!existsSync(filePath)) {
+    const archivedPath = resolve(archiveDir(), `${session.ticket_id}.json`);
+    if (existsSync(archivedPath)) {
+      console.log(`[session] Skipping save for archived session: ${session.ticket_id}`);
+      return;
+    }
+  }
+
   let merged: Session = session;
   if (existsSync(filePath)) {
     try {

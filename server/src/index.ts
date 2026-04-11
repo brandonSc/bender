@@ -480,7 +480,7 @@ app.post("/webhooks/slack", async (req, res) => {
         } else {
           console.log(`[slack] Lurk → react :${decision.emoji}: (confidence=${decision.confidence})`);
           await addReaction(event.slack_channel!, (slackEvent.ts as string) ?? "", decision.emoji);
-          recordReaction(event.slack_channel!);
+          recordReaction(event.slack_channel!, decision.emoji);
         }
       } else if (decision.action === "reply" && decision.suggested_reply) {
         console.log(`[slack] Lurk → reply (confidence=${decision.confidence})`);

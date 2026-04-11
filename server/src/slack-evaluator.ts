@@ -1,18 +1,34 @@
 import { getChannelHistory, type MessageReaction } from "./slack-client.js";
 import { listActiveSessions } from "./session-store.js";
 
-// Cooldown: track recent reactions per channel to avoid spamming
+// Cooldown: track recent reactions per channel and globally
 const recentReactions = new Map<string, number>();
-const REACT_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes between reactions in same channel
+let lastGlobalReaction = 0;
+const REACT_COOLDOWN_MS = 45 * 60 * 1000; // 45 minutes between reactions in same channel
+const GLOBAL_COOLDOWN_MS = 20 * 60 * 1000; // 20 minutes between reactions globally
+
+// Track recent emojis to encourage variety
+const recentEmojis: string[] = [];
+const MAX_RECENT_EMOJIS = 10;
 
 export function canReactInChannel(channel: string): boolean {
+  const now = Date.now();
+  // Global cooldown
+  if (now - lastGlobalReaction < GLOBAL_COOLDOWN_MS) return false;
+  // Per-channel cooldown
   const last = recentReactions.get(channel);
-  if (last && Date.now() - last < REACT_COOLDOWN_MS) return false;
+  if (last && now - last < REACT_COOLDOWN_MS) return false;
   return true;
 }
 
-export function recordReaction(channel: string): void {
-  recentReactions.set(channel, Date.now());
+export function recordReaction(channel: string, emoji?: string): void {
+  const now = Date.now();
+  recentReactions.set(channel, now);
+  lastGlobalReaction = now;
+  if (emoji) {
+    recentEmojis.push(emoji);
+    if (recentEmojis.length > MAX_RECENT_EMOJIS) recentEmojis.shift();
+  }
 }
 
 interface LurkDecision {
@@ -69,6 +85,13 @@ export async function evaluateLurk(
       }
     }
 
+    // Recent emoji variety context
+    let varietyContext = "";
+    if (recentEmojis.length > 0) {
+      const unique = [...new Set(recentEmojis)];
+      varietyContext = `\nBender's recent reactions (AVOID repeating): ${unique.map(e => `:${e}:`).join(", ")}`;
+    }
+
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -81,11 +104,11 @@ export async function evaluateLurk(
         max_tokens: 200,
         messages: [{
           role: "user",
-          content: `You evaluate whether Bender (a coding agent on this team) should respond to a Slack message. Bender lurks in channels and should only chime in when genuinely valuable or funny.
+          content: `You decide whether Bender (a coding agent on this Slack team) should react to a message. Bender lurks and RARELY reacts — only when the message truly stands out.
 
-IMPORTANT: Bender's Slack user ID is ${botUserId ?? "U0AQ615JKMF"}. Any mention of <@${botUserId ?? "U0AQ615JKMF"}> in messages refers to Bender (you). Treat it the same as someone saying "bender" or "Bender".
+IMPORTANT: Bender's Slack user ID is ${botUserId ?? "U0AQ615JKMF"}. Any mention of <@${botUserId ?? "U0AQ615JKMF"}> in messages refers to Bender (you).
 
-Custom emojis available: :bender-neat:, :lgtm:, :shipit:, :ship_it_parrot:, :party-parrot:, :this-is-fine-fire:, :chefkiss:, :catjam:, :facepalm:, :notlikethis:, :goodnewseveryone:, :nice:, :same:, :nod:, :lolsob:, :take_my_money:, :whoa:, :cool-doge:, :success:, :done:, :yep:, :thank-you:, :happening:, :excellent-mrburns:, :jobs_done:
+Custom emojis: :bender-neat:, :lgtm:, :shipit:, :ship_it_parrot:, :party-parrot:, :this-is-fine-fire:, :chefkiss:, :catjam:, :facepalm:, :notlikethis:, :goodnewseveryone:, :nice:, :same:, :nod:, :lolsob:, :take_my_money:, :whoa:, :cool-doge:, :success:, :done:, :yep:, :thank-you:, :happening:, :excellent-mrburns:, :jobs_done:
 
 Bender's active work:
 ${sessionSummary}
@@ -93,47 +116,38 @@ ${sessionSummary}
 Recent channel messages:
 ${context}
 
-New message: ${message}${herdContext}
+New message: ${message}${herdContext}${varietyContext}
 Is conversation in a thread: ${isInThread}
 
-Should Bender respond? Reply with ONLY valid JSON:
+Reply with ONLY valid JSON:
 {"action":"ignore"|"emoji_react"|"reply", "confidence":0.0-1.0, "emoji":"emoji_name", "reply_in_thread":${isInThread}, "suggested_reply":"..."}
 
-Rules:
-**Emoji reactions — think about what the message is actually saying and pick an emoji that MATCHES:**
-- Read the message carefully. What is the person expressing? Pick an emoji a real human teammate would use for THAT specific sentiment.
-- Don't just default to :bender-neat: — think about what fits:
-  - Someone did great work → :chefkiss: or :shipit: or :lgtm:
-  - Something funny → :joy: or :lolsob:
-  - Agreement → :+1: or :100: or :nod: or :yep:
-  - Someone shares exciting news → :tada: or :party-parrot: or :happening:
-  - Impressive technical achievement → :bender-neat: or :fire: or :whoa:
-  - Something shipped → :ship_it_parrot: or :rocket: or :done:
-  - Everything is on fire → :this-is-fine-fire: or :notlikethis:
-  - Relatable frustration → :facepalm: or :same:
-  - Good news → :goodnewseveryone:
-- The emoji should make sense if you read the message and the reaction together. If it doesn't fit, don't react.
-- Space them out — one react per conversation topic.
-${herdActive ? `\n**Herd mentality — others are reacting, join in:**
-- Multiple teammates already reacted to this message. It's natural to pile on.
-- PREFER using one of the emojis others already used — adding to an existing reaction feels more human than picking something unique.
-- Your confidence can be higher here since the crowd has already validated this is reaction-worthy.
+## Confidence scale — use the FULL range honestly:
+- 0.0-0.3: Nothing here for Bender. Mundane message, no relevant context.
+- 0.3-0.5: Mildly interesting but not reaction-worthy. A human wouldn't react to this.
+- 0.5-0.7: Decent message but the emoji fit is only partial. Pass.
+- 0.7-0.85: Good message, decent emoji fit, but not a slam dunk. Probably still pass.
+- 0.85-0.95: Strong fit — the emoji clearly matches the sentiment and a teammate would naturally react.
+- 0.95-1.0: Perfect, can't-miss reaction. The message is begging for exactly this emoji.
+
+Most messages should score 0.2-0.5. A score above 0.85 should be RARE — maybe 1 in 10 messages.
+
+## Emoji selection:
+- Read the message. What is the person ACTUALLY expressing?
+- Pick the emoji a real human would instinctively use for that EXACT sentiment.
+- If no emoji is a natural, obvious fit → ignore. Don't force it.${varietyContext ? "\n- Avoid recently used emojis — pick something fresh." : ""}
+${herdActive ? `\n## Herd mentality:
+- Others already reacted. Joining in is natural — prefer their emojis.
 ` : ""}
-**Replies (higher bar — be selective):**
-- Someone mentions "bender" by name and is clearly talking to him → reply
-- There's a PERFECT opening for a short witty Bender quip (1 sentence max) → reply
-- Someone is going wrong technically on something Bender actively worked on → reply with the correction
-- Replies should be SHORT (1 sentence), punchy, and in-character.
+## Replies (very high bar):
+- Someone is clearly talking to/about Bender → reply
+- PERFECT opening for a one-sentence Bender quip → reply
+- Technical correction on Bender's own work → reply
+- Everything else → don't reply
+${mentionsBenderByName ? "- Someone mentioned Bender by name — they might be talking to you. Be more willing to reply." : ""}
 
-**Ignore:**
-- General chit-chat where Bender has nothing to add
-- Technical discussions Bender has no context on
-- When in doubt → ignore.
-
-- If conversation is NOT in a thread, reply_in_thread should be false.
-- Be SELECTIVE. Most messages should be "ignore". Only react if the emoji is an obvious, natural fit — not just vaguely related.
-- confidence must be > ${herdActive ? "0.75" : "0.9"} for emoji_react, > ${mentionsBenderByName ? "0.70" : "0.9"} for reply. Set confidence below these thresholds unless you're genuinely sure.${mentionsBenderByName ? "\n- Someone mentioned Bender by name — they might be talking to or about you. Be more willing to reply." : ""}
-- When in doubt, ignore. Less is more — a well-timed reaction is worth ten random ones.`,
+## Default behavior:
+IGNORE. Bender is the quiet, cool teammate who only reacts when it really counts. A well-timed reaction once an hour beats ten mediocre ones.`,
         }],
       }),
     });
@@ -155,9 +169,10 @@ ${herdActive ? `\n**Herd mentality — others are reacting, join in:**
     const decision = JSON.parse(jsonMatch[0]) as LurkDecision;
     console.log(`[slack-evaluator] Haiku says: ${decision.action} confidence=${decision.confidence} herd=${herdActive} nameMention=${mentionsBenderByName} msg="${message.slice(0, 60)}"`);
 
-    // Thresholds: base 0.9 for both, herd drops emoji to 0.75, name mention drops reply to 0.70
-    const emojiThreshold = herdActive ? 0.75 : 0.9;
-    const replyThreshold = mentionsBenderByName ? 0.70 : 0.9;
+    // Thresholds: base 0.85 for emoji (prompt no longer leaks exact number),
+    // herd drops to 0.75, name mention drops reply to 0.70
+    const emojiThreshold = herdActive ? 0.75 : 0.85;
+    const replyThreshold = mentionsBenderByName ? 0.70 : 0.85;
     const threshold = decision.action === "emoji_react" ? emojiThreshold : replyThreshold;
     if (decision.confidence < threshold) {
       console.log(`[slack-evaluator] Suppressed ${decision.action}: confidence=${decision.confidence} < threshold=${threshold}${decision.emoji ? ` emoji=:${decision.emoji}:` : ""}${decision.suggested_reply ? ` reply="${decision.suggested_reply.slice(0, 60)}"` : ""} msg="${message.slice(0, 60)}"`);
