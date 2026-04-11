@@ -36,13 +36,22 @@ You can point a collector or policy at a custom branch for testing:
 - uses: github://earthly/lunar-lib/collectors/my-plugin@bender/my-feature-branch
 ```
 
-**THIS IS FOR TESTING ONLY.** When you are done testing:
-1. Revert the `uses:` reference back to a stable ref (`@main` or `@v1.0.x`)
-2. Or remove the collector/policy entry entirely if it wasn't there before your test
-3. Commit and push the revert to main
-4. Verify the build passes
+**THIS IS FOR TESTING ONLY.** Cleanup after testing depends on whether
+the plugin is **new** or **existing**:
 
-**If you forget this step, the build WILL break** when the branch is deleted
+**New collectors/policies** (not yet on `@main`):
+1. **Remove** the collector/policy entry from `lunar-config.yml` entirely
+2. Commit and push the removal — verify the sync build passes
+3. After the lunar-lib PR merges, **re-add** the entry referencing `@main`
+4. Why: `@main` Docker images don't exist until the PR merges and CI runs on main.
+   Setting `@main` before merge → hub pulls a nonexistent image → collector silently fails.
+
+**Existing collectors/policies** (already on `@main`):
+1. **Revert** the `uses:` reference back to `@main` or `@v1.0.x`
+2. Commit and push the revert — verify the sync build passes
+3. This is safe because `@main` images already exist for existing plugins.
+
+**If you forget cleanup entirely, the build WILL break** when the branch is deleted
 (e.g. after PR merge). This is exactly what happened with the dotnet plugin on
 `bender/eng-486-dotnet` — the branch was cleaned up but the config still
 referenced it, breaking all manifest syncs for pantalasa/lunar.
